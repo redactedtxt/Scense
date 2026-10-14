@@ -78,9 +78,10 @@ Every major decision on this project, why we made it, what we rejected, and when
 ### 16. Starter catalogue of 150 to 300 fragrances, all genders
 - **Why:** That size covers most popular searches and keeps a one-week build manageable. Women's scents give Soften more partners, since a rose or powdery floral can round off a harsh woody scent.
 
-### 17. Strength from longevity and sillage votes, with concentration as the fallback
-- **Decision:** Strength on a 1 to 4 scale comes from community votes. Fragrances with under 50 votes fall back to concentration.
-- **Why:** Concentration alone rates Club de Nuit Intense Man, an EDT, as moderate, though it performs like a parfum. The votes fix that. Under 50 votes, the averages get noisy.
+### 17. Strength from longevity and sillage votes only
+- **Decision:** Strength on a 1 to 4 scale comes from community longevity and sillage votes, binned with cutoffs in `scoring.yaml`. There is no concentration fallback.
+- **Why:** Concentration alone rates Club de Nuit Intense Man, an EDT, as moderate, though it performs like a parfum. The votes fix that. The dataset has no concentration field, and every catalogue fragrance has thousands of votes, so a fallback would never run.
+- **Revisit when:** The catalogue grows to include low-vote fragrances (the 50-vote guard in ingest will fail first).
 
 ### 18. Concierge tags from the dataset's season and day/night votes
 - **Why:** Real votes beat rules we would write ourselves.
@@ -175,3 +176,45 @@ Claude Code adds entries here when it makes a call the spec didn't cover.
 - **Dev-only database password default** (`scense_dev`) in `docker-compose.yml`, so `docker compose up` works without a `.env`. Production uses a real secret.
 - **Placeholders for later milestones:** `docker-compose.prod.yml` (comment only), `deploy.yml` (manual trigger, echoes "not built yet"), and the Caddyfile copied from SPEC.md.
 - **Windows has no `make`.** `docker compose up --build` is the equivalent of `make dev`.
+
+### B2. M1 mapping drafts (2026-10-14)
+- **Mapping CSVs have a fourth `check` column.** SPEC 3.3 asks for `# CHECK` marks but lists three columns. A separate column keeps the other three clean to parse.
+- **Read the CSV, not the JSONL, in the pipeline.** It has every field we need and loads far faster.
+- **`accord_map.csv` covers the 59 accords in the top 300**, not all 92. Ingest should fail loudly on an unmapped accord instead of skipping it.
+- **`note_map.csv` ties and variants:** superseded by B8 (variants are merged; ties go to the larger summed weight).
+
+### B3. Dropped concentration and strength_source (2026-10-14)
+- **Decision:** No `concentration` column, no concentration fallback, no `strength_source`; concentration labels are removed from the pairing page.
+- **Why:** The dataset has no concentration field, so the fallback could never run and the label could never be filled in.
+
+### B4. Our own slugs: brand-name-year (2026-10-14)
+- **Decision:** Slug = lowercase kebab-case `brand-name-year` (`davidoff-cool-water-1988`), year omitted if unknown, dataset id appended only when brand, name, and year all collide inside the catalogue.
+- **Why:** The dataset's slug is not unique (two Cool Waters), and a readable slug makes better URLs than an id. Collisions are checked inside the 300 rows so a slug never changes because of an unrelated fragrance.
+
+### B5. Strength cutoffs live in scoring.yaml (2026-10-14)
+- **Decision:** `strength_cutoffs: [0.46, 0.54, 0.62]` in `scoring.yaml`, approved by Tejas. They split the top 300 into 75 / 78 / 72 / 75 and put Club de Nuit Intense Man at strength 4.
+- **Why:** The spec's fixed 0.25/0.5/0.75 bins put only 14 of 300 fragrances at strength 4, and not Club de Nuit Intense Man.
+
+### B6. Store dataset values, show friendly labels (2026-10-14)
+- **Decision:** The database stores `male`, `female`, `unisex`, and `autumn`. The UI shows Men, Women, Unisex, and Fall.
+- **Why:** Storing the dataset's own values avoids a translation step in the pipeline; the label mapping lives in one place in the web app.
+
+### B7. Spec example changed to Baccarat Rouge 540 (2026-10-14)
+- **Decision:** The "#38 of 299" example uses a fragrance in the top 300.
+- **Why:** Les Sables Roses has 2,239 votes and is not in the catalogue, so the example could not be reproduced.
+
+### B8. Note variants merged through note_aliases.csv (2026-10-14)
+- **Decision:** Spelling and origin variants map to one canonical note in `pipeline/config/note_aliases.csv`; `note_map.csv` holds 150 canonical notes. Tied candidates at the cutoff go to the larger summed note weight. Tejas approved all merges and added Orris Root and Orris into Iris (Iris is now in 52 of 300 fragrances); Myrrh topped the map back up to 150.
+- **Why:** Note pairing would otherwise rank "Vanilla", "Vanille", and "Bourbon Vanilla" as three different partners.
+
+### B9. No sharp facet on the citrus accord (2026-10-14)
+- **Decision:** `sharp` stays on the `metallic` and `aldehydic` accords only, plus the Lemon, Grapefruit, Lime, Bitter Orange, Galbanum, and Aldehydes notes.
+- **Why:** Tagging every citrus accord would raise the harshness of all citrus-led fragrances, including mild ones.
+
+### B10. Mapping files keep a `check` column the pipeline ignores (2026-10-14)
+- **Decision:** `accord_map.csv` and `note_map.csv` carry a fourth `check` column with `# CHECK` remarks. Loaders read named columns only.
+- **Why:** The reviewer's notes live next to the rows they are about, without mixing into the data.
+
+### B11. Mapping review completed (2026-10-14)
+- **Decision:** Tejas reviewed every `# CHECK` row. Carnation and Anise gained the spicy facet, Opoponax gained sweet, and `aldehydic`/Aldehydes now use Soft Floral:0.6;Floral:0.2;Citrus:0.2. All CHECK markers were cleared.
+- **Why:** The reviewed rows are settled; the `check` column stays empty for future remarks.
