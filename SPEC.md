@@ -1,4 +1,4 @@
-# SPEC.md: Fragrance Layering App (working name: Accord)
+# SPEC.md: Scense, a Fragrance Layering App
 
 You are Claude Code. This file is the source of truth for the build. Read it in full before writing code. Build one milestone at a time, in order. After each milestone, stop, summarise what you built, list the files a reviewer should read first, and wait for Tejas to approve before starting the next one.
 
@@ -30,10 +30,12 @@ A fragrance catalogue with a layering engine at its centre.
 
 ## 2. Stack and repo layout
 
+App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://scense.name`.
+
 | Layer | Choice |
 |---|---|
 | Frontend | React 18 + Vite + TypeScript, React Router, TanStack Query, Tailwind CSS |
-| API | Node 20 + Express + TypeScript, Zod for validation, `pg` for database access |
+| API | Node 24 + Express + TypeScript, Zod for validation, `pg` for database access |
 | Offline jobs | Python 3.12: pandas, psycopg 3, PyYAML, pytest |
 | Database | PostgreSQL 16 |
 | AI | Anthropic API, model `claude-haiku-5-5`, official `@anthropic-ai/sdk` |
@@ -372,7 +374,7 @@ All responses JSON. Validate every body and query with Zod. Errors return `{ err
 | GET/POST/PUT/DELETE | `/api/fragrances/:id/reviews` | One review per user per fragrance |
 | PUT | `/api/pair-ratings` | Store only |
 
-Auth: bcrypt cost 12. JWT signed with `JWT_SECRET`, 7-day expiry, in an httpOnly, Secure, SameSite=Lax cookie. Add `helmet` and a CORS allowlist from `CORS_ORIGIN`.
+Auth: bcrypt cost 12. JWT signed with `JWT_SECRET`, 7-day expiry, in an httpOnly, Secure, SameSite=Lax cookie. Add `helmet` and a CORS allowlist from `CORS_ORIGIN` (production value: `https://scense.name`).
 
 ---
 
@@ -446,7 +448,7 @@ Pages:
 
 Taste profile card: top 3 positive families and facets in plain words, top 2 negatives, the summary line, and an Edit mode with sliders from -1 to 1. Saving updates storage or the API.
 
-Header: logo, nav, "Sign in" in the top right. Footer on every page: "Fragrance data from the Fragrantica community via the Decant dataset. Not affiliated with Fragrantica."
+Header: Scense wordmark, nav, "Sign in" in the top right. Footer on every page: "Fragrance data from the Fragrantica community via the Decant dataset. Not affiliated with Fragrantica."
 
 Design: dark, warm, editorial. Serif display font for headings, clean sans for body. Amber accent. Must work at 375px wide. Keyboard accessible. No layout shift on results load.
 
@@ -464,13 +466,42 @@ Lint (ESLint, Ruff), typecheck, run API, web, and pipeline tests, build both Doc
 1. Build API and web images, push to GitHub Container Registry.
 2. SSH to EC2 with `appleboy/ssh-action`, `docker compose -f docker-compose.prod.yml pull && up -d`.
 3. Run migrations in the API container.
-4. Curl `/api/health`. Fail the job if it doesn't return 200 within 60 seconds.
+4. Curl `https://scense.name/api/health`. Fail the job if it doesn't return 200 within 60 seconds.
 
 ### Production (`docker-compose.prod.yml`)
-- `caddy`: TLS via Let's Encrypt, serves the web build, proxies `/api` to the API.
-- `api`: the Node image.
+- `caddy`: TLS via Let's Encrypt for `scense.name` and `www.scense.name`, serves the web build, proxies `/api` to the API. `scense.name` is the main address; `www.scense.name` returns a permanent redirect to it.
+- `api`: the Node 24 image.
 - `db`: `postgres:16` with a named volume, not exposed outside the Docker network.
 - `backup`: nightly `pg_dump` to an S3 bucket, keep 14 days.
+
+### Caddyfile
+
+```
+scense.name {
+	encode gzip
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+www.scense.name {
+	redir https://scense.name{uri} permanent
+}
+```
+
+DNS: an A record for `scense.name` and another for `www.scense.name`, both pointing at the EC2 Elastic IP.
+
+### Node version
+Pin Node 24 in every place it can drift:
+- `.nvmrc` at the repo root contains `24`.
+- `api/package.json` and `web/package.json` set `"engines": { "node": ">=24 <25" }`.
+- Dockerfiles build from `node:24-alpine`.
+- `ci.yml` and `deploy.yml` use `actions/setup-node` with `node-version-file: .nvmrc`.
 
 ### Secrets (GitHub Actions secrets and an `.env` on the server)
 `DATABASE_URL`, `POSTGRES_PASSWORD`, `JWT_SECRET`, `ANTHROPIC_API_KEY`, `CORS_ORIGIN`, `GUEST_DAILY_CONVERSATION_CAP`, `ADMIN_TOKEN`, `EC2_HOST`, `EC2_USER`, `EC2_SSH_KEY`, `AWS_BACKUP_BUCKET`.
