@@ -1,0 +1,41 @@
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@400;500;600&display=swap");
+@import "tailwindcss";
+
+/* Design tokens pulled from design/figma-make/src/index.css. Every page shares these. */
+@theme {
+  --font-display: "Cormorant Garamond", serif;
+  --font-sans: "Inter", sans-serif;
+
+  --color-ink: #0b0b0a;
+  --color-panel: #171715;
+  --color-line: #2b2a27;
+  --color-line-strong: #35322d;
+  --color-text: #ede6d8;
+  --color-muted: #8f8b83;
+  --color-faint: #5e5a53;
+  --color-gold: #c5934e;
+  --color-gold-bright: #d3b078;
+  --color-gold-deep: #a87534;
+}
+
+:root {
+  color-scheme: dark;
+  font-synthesis: none;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  background:
+    radial-gradient(circle at 79% 5%, rgba(118, 77, 26, 0.1), transparent 27rem),
+    var(--color-ink);
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--color-gold);
+  outline-offset: 4px;
+}
