@@ -149,6 +149,15 @@ Every major decision on this project, why we made it, what we rejected, and when
 ### 32. AI writes the code, Tejas reviews it
 - **Why:** It fits the week. The risk: interviewers ask you to explain and change your project live. The plan builds in "explain it back" checks after each milestone, and the README states the project was built with AI assistance.
 
+### 33. Renamed the app to Scense (2026-10-14)
+- **Why:** The name matches the domain. The GitHub repo is named `scense`.
+
+### 34. Bought scense.name as the production domain (2026-10-14)
+- **Why:** A short, memorable address for the portfolio link, with `www.scense.name` redirecting to it.
+
+### 35. Switched from Node 20 to Node 24 (2026-10-14)
+- **Why:** Node 20 reached end of life in April 2026, and the laptop, Docker images, CI, and server now share one version.
+
 ---
 
 ## Build-time decisions
