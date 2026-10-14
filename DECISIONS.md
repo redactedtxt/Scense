@@ -158,6 +158,10 @@ Every major decision on this project, why we made it, what we rejected, and when
 ### 35. Switched from Node 20 to Node 24 (2026-10-14)
 - **Why:** Node 20 reached end of life in April 2026, and the laptop, Docker images, CI, and server now share one version.
 
+### 36. Designed the pairing page in Figma Make (2026-10-14)
+- **Why:** A fixed visual target stops the AI inventing a look, and the export runs on the same React and Tailwind stack.
+- **Consequence:** The frontend moves from React 18 to React 19 and from Tailwind CSS to Tailwind v4 (via `@tailwindcss/vite`) to match the export. The export lives in `design/figma-make/` as a reference, not app code.
+
 ---
 
 ## Build-time decisions

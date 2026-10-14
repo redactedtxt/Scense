@@ -34,7 +34,7 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 
 | Layer | Choice |
 |---|---|
-| Frontend | React 18 + Vite + TypeScript, React Router, TanStack Query, Tailwind CSS |
+| Frontend | React 19 + Vite + TypeScript, React Router, TanStack Query, Tailwind CSS v4 (via `@tailwindcss/vite`) |
 | API | Node 24 + Express + TypeScript, Zod for validation, `pg` for database access |
 | Offline jobs | Python 3.12: pandas, psycopg 3, PyYAML, pytest |
 | Database | PostgreSQL 16 |
@@ -450,7 +450,16 @@ Taste profile card: top 3 positive families and facets in plain words, top 2 neg
 
 Header: Scense wordmark, nav, "Sign in" in the top right. Footer on every page: "Fragrance data from the Fragrantica community via the Decant dataset. Not affiliated with Fragrantica."
 
-Design: dark, warm, editorial. Serif display font for headings, clean sans for body. Amber accent. Must work at 375px wide. Keyboard accessible. No layout shift on results load.
+### Design reference
+
+- `design/figma-make/src/App.tsx` and `design/figma-make/src/index.css` are the visual source of truth for the pairing page (`/`). Match its layout, colours, fonts (Cormorant Garamond for display, Inter for body), and spacing. The folder is a reference only. Do not import from it or build it.
+- Two rules on the pairing page override the Figma design:
+  - In Notes mode, the results summary reads "[N] notes ranked to [enhance/soften] [selected notes]." It never mentions fragrances or a base bottle.
+  - The "Find my bottle's rank" finder only appears in Fragrance mode. Hide it in Notes mode.
+- Pull the colours and fonts into Tailwind v4 theme tokens in `index.css` so every page shares them.
+- Pages without a design (browse, fragrance page, chat, concierge, collection, about) reuse the same tokens and components.
+- Treat the export's data as placeholders: the hardcoded matches, Unsplash images, and example copy. Real data comes from the API and `image_url`.
+- Keep the existing rules: works at 375px, keyboard accessible, no layout shift on results load.
 
 ---
 
