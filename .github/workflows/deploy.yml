@@ -1,0 +1,8 @@
+# Placeholder until M6. Manual trigger only, so it never runs by accident.
+name: Deploy
+on: workflow_dispatch
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Deploy not built yet (M6)"

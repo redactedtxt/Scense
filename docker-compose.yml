@@ -1,0 +1,56 @@
+# Local development: Postgres, the API with hot reload, and Vite.
+# The password default below is for local dev only; production uses a real secret.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: scense
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scense_dev}
+      POSTGRES_DB: scense
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # The API waits for this, so it never starts before the database accepts connections.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scense -d scense"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./api
+      target: dev
+    environment:
+      DATABASE_URL: postgres://scense:${POSTGRES_PASSWORD:-scense_dev}@db:5432/scense
+      CORS_ORIGIN: http://localhost:5173
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./api:/app
+      - ./db:/db
+      - /app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./web
+      target: dev
+    environment:
+      API_PROXY_TARGET: http://api:3000
+      # Bind mounts on Windows/macOS don't send file events, so Vite must poll.
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    depends_on:
+      - api
+
+volumes:
+  db-data:

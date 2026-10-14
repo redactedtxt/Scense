@@ -1,0 +1,27 @@
+# Dependencies and build output
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Secrets: only .env.example is committed
+.env
+.env.*
+!.env.example
+
+# Kaggle dataset files (large, license unconfirmed)
+pipeline/raw/*
+!pipeline/raw/.gitkeep
+
+# Playwright and editor/OS noise
+playwright-report/
+test-results/
+.DS_Store
+Thumbs.db
+.idea/

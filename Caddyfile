@@ -1,0 +1,15 @@
+scense.name {
+	encode gzip
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+www.scense.name {
+	redir https://scense.name{uri} permanent
+}

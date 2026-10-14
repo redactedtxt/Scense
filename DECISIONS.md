@@ -167,3 +167,11 @@ Every major decision on this project, why we made it, what we rejected, and when
 ## Build-time decisions
 
 Claude Code adds entries here when it makes a call the spec didn't cover.
+
+### B1. M0 scaffold choices (2026-10-14)
+- **Two npm projects, no workspaces.** `api/` and `web/` each have their own `package.json` and lockfile. Simplest option, and each Docker image installs only what it needs.
+- **`app.ts` added to the API.** `createApp(db)` builds the Express app from a database object, so tests pass a fake one. `index.ts` only reads config and starts listening.
+- **TypeScript 5.9, not 7.** `typescript-eslint` support for the newest major is not guaranteed; 5.9 is what the Figma export uses.
+- **Dev-only database password default** (`scense_dev`) in `docker-compose.yml`, so `docker compose up` works without a `.env`. Production uses a real secret.
+- **Placeholders for later milestones:** `docker-compose.prod.yml` (comment only), `deploy.yml` (manual trigger, echoes "not built yet"), and the Caddyfile copied from SPEC.md.
+- **Windows has no `make`.** `docker compose up --build` is the equivalent of `make dev`.
