@@ -10,7 +10,7 @@ Tejas reviews all code but does not write it. Write code a third-year CS student
 
 A fragrance catalogue with a layering engine at its centre.
 
-1. **Pairing (the centerpiece).** You enter one or more notes, or one fragrance, and pick a goal: **Enhance** or **Soften**. Notes return a ranked list of notes. A fragrance returns a ranked list of fragrances. You can search the fragrance list for any bottle and see its rank ("Les Sables Roses: #38 of 299").
+1. **Pairing (the centerpiece).** You enter one or more notes, or one fragrance, and pick a goal: **Enhance** or **Soften**. Notes return a ranked list of notes. A fragrance returns a ranked list of fragrances. You can search the fragrance list for any bottle and see its rank ("Baccarat Rouge 540: #38 of 299"). The UI shows the fragrance's name, brand, and dominant family only; it never shows a concentration label such as "Eau de toilette", because the dataset has none.
 2. **Catalogue.** Browse and search 150 to 300 fragrances. Each page shows the note pyramid, accords, strength, season and day/night tags, community rating, and vote count.
 3. **Chatbot.** You describe what you like and dislike in plain words. The AI turns your words into a taste profile and the server recommends fragrances from the catalogue.
 4. **Concierge.** You describe an outing in free text. The AI asks for anything missing, then the server picks the best fragrance from your Own list.
@@ -58,11 +58,12 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 ├── pipeline/
 │   ├── raw/                      # Kaggle files, gitignored
 │   ├── config/
-│   │   ├── scoring.yaml          # every tunable number lives here
+│   │   ├── scoring.yaml          # every tunable number lives here (incl. strength_cutoffs)
 │   │   ├── families.yaml         # 14 wheel families, ring positions, harshness
 │   │   ├── facets.yaml           # facets and harshness nudges
 │   │   ├── accord_map.csv        # dataset accord -> family weights + facets
-│   │   ├── note_map.csv          # note -> family weights + facets
+│   │   ├── note_map.csv          # canonical note -> family weights + facets
+│   │   ├── note_aliases.csv      # dataset note spelling/origin variant -> canonical note
 │   │   └── occasions.yaml        # concierge occasion -> family preferences
 │   ├── src/
 │   │   ├── inspect_dataset.py
@@ -127,8 +128,10 @@ The wheel lacks gourmand, spicy, and an intensity axis. Facets patch that. Store
 
 ### 3.3 Mapping files (draft them, Tejas reviews them)
 
-- `accord_map.csv` columns: `accord, family_weights, facets`. Example row: `warm spicy, "Woody Amber:0.6;Soft Amber:0.4", "spicy"`. Weights in a row sum to 1.
-- `note_map.csv` columns: `note, family_weights, facets`. Cover the 150 most frequent notes in the filtered catalogue.
+- `accord_map.csv` columns: `accord, family_weights, facets, check`. Example row: `warm spicy, "Woody Amber:0.6;Soft Amber:0.4", "spicy"`. Weights in a row sum to 1. Cover every accord that appears in the filtered catalogue.
+- `note_map.csv` columns: `note, family_weights, facets, check`. Cover the 150 most frequent **canonical** notes in the filtered catalogue (frequency = number of catalogue fragrances containing the note, after aliases are applied; ties at the cutoff go to the note with the larger summed weight).
+- `note_aliases.csv` columns: `alias, canonical`. Maps spelling and origin variants to one canonical note ("Vanille", "Madagascar Vanilla", "Bourbon Vanilla" → "Vanilla"; "Virginia Cedar" → "Cedar"). Ingest applies it to every note name before anything else, and a fragrance that lists two variants of one note counts that note once (keep the highest weight). Notes outside `note_map.csv` after aliasing are ignored for note pairing but still shown on the fragrance page.
+- The `check` column holds `# CHECK` remarks for the human reviewer. **Pipeline code must ignore it** when loading (read only the named columns).
 
 Draft both files from perfumery knowledge, then **stop and ask Tejas to review them** before moving on. Mark any row you feel unsure about with a `# CHECK` comment column.
 
@@ -139,11 +142,12 @@ For each fragrance:
 1. `p` = a 14-value vector. For each accord with strength `s` (0 to 100), add `s × weight` to each mapped family. Normalise so `p` sums to 1. If a fragrance has no accords, build `p` from its notes with equal weight per note.
 2. `facets` = a 6-value vector. Each facet's value = (sum of strengths of accords tagged with it) / (sum of all accord strengths). Range 0 to 1.
 3. `harshness` = clamp(Σ pᵢ × familyHarshnessᵢ + Σ facet_f × nudge_f, 0, 1).
-4. `strength` (integer 1 to 4):
-   - If the fragrance has 50 or more longevity votes plus sillage votes: convert each vote distribution to a 0 to 1 weighted mean (weakest bucket = 0, strongest = 1), average the two, and bin: `<0.25 → 1`, `<0.5 → 2`, `<0.75 → 3`, else `4`.
-   - Otherwise fall back to concentration: EDC or Eau Fraîche = 1, EDT = 2, EDP = 3, Parfum, Extrait, or Elixir = 4. Unknown = 2.
-   - Store which source you used in `strength_source`.
-5. Season tags and day/night tags come from the dataset's season and time-of-day votes. Store each as a share from 0 to 1 (`winter, spring, summer, fall, day, night`).
+4. `strength` (integer 1 to 4), always from community votes. The dataset has no concentration field, so there is no fallback:
+   - Convert the longevity vote distribution (5 buckets) and the sillage vote distribution (4 buckets) each to a 0 to 1 weighted mean (weakest bucket = 0, strongest = 1) and average the two.
+   - Bin with `strength_cutoffs: [0.46, 0.54, 0.62]` from `scoring.yaml` (`[c1, c2, c3]`): `< c1 → 1`, `< c2 → 2`, `< c3 → 3`, else `4`.
+   - `scoring.yaml` also holds `min_strength_votes` (50). `ingest.py` fails loudly if any catalogue fragrance has fewer longevity plus sillage votes than that. The top 300 all have 4,085 or more, so this is a guard, not a code path.
+   - Tejas approved these cutoffs from the top-300 distribution. They give strengths 1 to 4 a 75 / 78 / 72 / 75 split and put Armaf Club de Nuit Intense Man (0.633) at 4. Re-check the split if the catalogue changes.
+5. Season tags and day/night tags come from the dataset's season and time-of-day votes. Store each as a share from 0 to 1 (`winter, spring, summer, autumn, day, night`). The data and schema use the dataset's `autumn`; the UI label is "Fall".
 
 ### 3.5 Scoring
 
@@ -184,6 +188,9 @@ Write these as pytest cases:
 - Enhance score of a fragrance with itself beats its score with any fragrance whose dominant family sits at distance 4 or more.
 - For Armaf Club de Nuit Intense Man, Soften: at least 7 of the top 10 partners have Amber, Soft Amber, or Floral Amber, or a `sweet` or `powdery` facet above 0.2. If this fails, print the top 10 and stop. Tejas will tune.
 - Soften never returns a partner with equal or higher harshness.
+- Every row in `accord_map.csv` and `note_map.csv` has weights that sum to 1 and only known family and facet names.
+- Every accord in the catalogue is in `accord_map.csv`, and every `note_aliases.csv` canonical name exists in `note_map.csv` or is a deliberate unmapped note.
+- Slug builder: `Davidoff` / `Cool Water` / 1988 gives `davidoff-cool-water-1988`; a missing year is left out; accents are stripped; a collision appends the dataset id.
 
 ---
 
@@ -192,7 +199,9 @@ Write these as pytest cases:
 Tejas downloads the Decant Kaggle dataset ("Fragrantica Perfumes: Ratings, Notes, Votes & More", kaggle.com/datasets/ledecanteur/fragrantica-perfumes) into `pipeline/raw/`.
 
 1. `inspect_dataset.py`: print the schema, column names, nested field shapes, and 3 sample rows. **Do not assume column names anywhere. Read them here first** and write a short `pipeline/DATASET_NOTES.md` describing the fields you will use.
-2. `ingest.py`: filter to the top 300 fragrances by total rating votes across men's, women's, and unisex. Drop rows missing both accords and notes. Output a clean parquet file.
+2. `ingest.py`: read `pipeline/raw/perfumes.csv`. Filter to the top 300 fragrances by `vote_count` (the dataset's total rating votes; it is not split by gender, so all genders compete together). Drop rows missing both accords and notes. Apply `note_aliases.csv`. Build each slug (below). Output a clean parquet file.
+   - **Slug:** the dataset's own `slug` is not unique (for example two Cool Waters), so we build ours: `brand-name-year`, lowercase kebab-case, accents stripped, non-alphanumerics collapsed to one hyphen, year omitted when unknown. Example: `davidoff-cool-water-1988`. Collisions are checked inside the 300-row catalogue only, so slugs don't change when an unrelated fragrance elsewhere in the dataset collides. If brand, name, and year all match, append `-{dataset id}` to every colliding row.
+   - Store `gender` as the dataset gives it (`male`, `female`, `unisex`) and seasons as `winter, spring, summer, autumn`. Only the UI says Men, Women, Fall.
 3. `profiles.py`: build `p`, facets, harshness, strength, season and day/night shares.
 4. `scoring.py`: ring distance, matrix build, pair scoring, goal rules. Pure functions, fully unit tested.
 5. `precompute.py`: all fragrance pairs for both goals, ranks included.
@@ -215,12 +224,11 @@ CREATE TABLE families (
 
 CREATE TABLE fragrances (
   id SERIAL PRIMARY KEY,
-  slug TEXT NOT NULL UNIQUE,
+  slug TEXT NOT NULL UNIQUE,          -- built by ingest: brand-name-year, see section 4
   name TEXT NOT NULL,
   brand TEXT NOT NULL,
-  gender TEXT,                        -- men, women, unisex
+  gender TEXT,                        -- male, female, unisex (dataset values; UI shows Men, Women, Unisex)
   release_year SMALLINT,
-  concentration TEXT,
   image_url TEXT,
   community_rating REAL,
   rating_votes INTEGER,
@@ -228,8 +236,7 @@ CREATE TABLE fragrances (
   facets JSONB NOT NULL,              -- {"sweet":0.3,...}
   harshness REAL NOT NULL,
   strength SMALLINT NOT NULL CHECK (strength BETWEEN 1 AND 4),
-  strength_source TEXT NOT NULL,      -- votes | concentration
-  seasons JSONB NOT NULL,             -- {"winter":0.4,...}
+  seasons JSONB NOT NULL,             -- {"winter":0.4,"spring":..,"summer":..,"autumn":..}; UI shows "Fall"
   daynight JSONB NOT NULL,            -- {"day":0.3,"night":0.7}
   search_vector TSVECTOR
 );
@@ -350,7 +357,7 @@ All responses JSON. Validate every body and query with Zod. Errors return `{ err
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/health` | DB ping, for the deploy check |
-| GET | `/api/fragrances?q=&gender=&family=&page=` | Full-text search on name and brand, 24 per page |
+| GET | `/api/fragrances?q=&gender=&family=&page=` | Full-text search on name and brand, 24 per page. `gender` is `male`, `female`, or `unisex` |
 | GET | `/api/fragrances/:slug` | Full detail: notes by layer, accords, family profile, strength, tags, rating |
 | GET | `/api/notes?q=` | Autocomplete |
 | POST | `/api/pairing/notes` | Body `{ notes: string[], goal }`. Returns ranked notes with score 0-100 and the dominant family of each |
@@ -456,6 +463,8 @@ Header: Scense wordmark, nav, "Sign in" in the top right. Footer on every page: 
 - Two rules on the pairing page override the Figma design:
   - In Notes mode, the results summary reads "[N] notes ranked to [enhance/soften] [selected notes]." It never mentions fragrances or a base bottle.
   - The "Find my bottle's rank" finder only appears in Fragrance mode. Hide it in Notes mode.
+  - Match cards show the dominant family only (for example "Woody Amber"). Drop the Figma placeholder's concentration label ("Woody Amber · Eau de toilette"); the dataset has no concentration.
+- Display labels differ from stored values: `male` shows "Men", `female` shows "Women", `autumn` shows "Fall".
 - Pull the colours and fonts into Tailwind v4 theme tokens in `index.css` so every page shares them.
 - Pages without a design (browse, fragrance page, chat, concierge, collection, about) reuse the same tokens and components.
 - Treat the export's data as placeholders: the hardcoded matches, Unsplash images, and example copy. Real data comes from the API and `image_url`.
