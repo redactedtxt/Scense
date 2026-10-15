@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, type KeyboardEvent, type ReactNode } from "react";
 import { familyColor } from "../lib/labels";
 
 // Small shared pieces. Each matches a class in the Figma export, named in the comment.
@@ -78,6 +78,60 @@ export function Segmented<T extends string>({
           {option.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+// .text-tabs, with the WAI-ARIA tabs keyboard model: one tab stop, arrow keys switch.
+// Each tab gets the id "tab-<value>", so the panel can say aria-labelledby="tab-<value>".
+export function TextTabs<T extends string>({
+  label,
+  tabs,
+  value,
+  onChange,
+  panelId,
+}: {
+  label: string;
+  tabs: { value: T; label: ReactNode }[];
+  value: T;
+  onChange: (value: T) => void;
+  panelId: string;
+}) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  function onKeyDown(event: KeyboardEvent, index: number) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    const next = (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    onChange(tabs[next]!.value);
+    refs.current[next]?.focus();
+  }
+
+  return (
+    <div role="tablist" aria-label={label} className="flex gap-[30px]">
+      {tabs.map((tab, index) => {
+        const selected = tab.value === value;
+        return (
+          <button
+            key={tab.value}
+            ref={(el) => {
+              refs.current[index] = el;
+            }}
+            id={`tab-${tab.value}`}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            aria-controls={panelId}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onChange(tab.value)}
+            onKeyDown={(event) => onKeyDown(event, index)}
+            className={`cursor-pointer border-b pb-[7px] font-display text-[27px] transition-colors ${
+              selected ? "border-gold-kicker text-text-bright" : "border-transparent text-faint hover:text-muted"
+            }`}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

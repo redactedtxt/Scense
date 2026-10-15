@@ -1,8 +1,10 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { setStatus } from "../lib/guestStore";
 import { mockApi, renderAt } from "./render";
 
 const base = {
+  id: 1,
   slug: "armaf-club-de-nuit-intense-man-2015",
   name: "Club de Nuit Intense Man",
   brand: "Armaf",
@@ -14,7 +16,7 @@ const base = {
   strength: 4,
   dominantFamily: "Citrus",
 };
-const partner = { ...base, slug: "hermes-terre-d-hermes-2006", name: "Terre d'Hermès", brand: "Hermès" };
+const partner = { ...base, id: 2, slug: "hermes-terre-d-hermes-2006", name: "Terre d'Hermès", brand: "Hermès" };
 
 const notePairing = (_url: URL, init?: RequestInit) => {
   const { notes, goal } = JSON.parse(String(init?.body));
@@ -29,17 +31,26 @@ const notePairing = (_url: URL, init?: RequestInit) => {
   };
 };
 
-const fragrancePairing = (url: URL) => ({
-  base: { slug: base.slug, name: base.name, brand: base.brand, dominantFamily: base.dominantFamily },
-  goal: url.searchParams.get("goal"),
-  page: 1,
-  pageSize: 24,
-  total: 280,
-  totalPages: 12,
-  items: [
-    { rank: 1, score: 100, slug: "eclaire", name: "Eclaire", brand: "Lattafa", imageUrl: null, dominantFamily: "Soft Amber", owned: false },
-  ],
-});
+// Page 1 of a 280-partner list holds Eclaire. "Deep Cut" sits at rank 150, far past
+// page 1, so only a server-side "Owned only" filter can find it.
+const eclaire = { id: 11, rank: 1, score: 100, slug: "eclaire", name: "Eclaire", brand: "Lattafa", imageUrl: null, dominantFamily: "Soft Amber", owned: false };
+const deepCut = { id: 42, rank: 150, score: 40, slug: "deep-cut", name: "Deep Cut", brand: "Niche", imageUrl: null, dominantFamily: "Floral", owned: true };
+
+const fragrancePairing = (url: URL) => {
+  const ownedOnly = url.searchParams.get("ownedOnly") === "true";
+  const owned = (url.searchParams.get("owned") ?? "").split(",").filter(Boolean).map(Number);
+  const items = ownedOnly ? [deepCut].filter((item) => owned.includes(item.id)) : [eclaire];
+  return {
+    base: { id: base.id, slug: base.slug, name: base.name, brand: base.brand, dominantFamily: base.dominantFamily },
+    goal: url.searchParams.get("goal"),
+    page: 1,
+    pageSize: 24,
+    total: 280,
+    matching: ownedOnly ? items.length : 280,
+    totalPages: ownedOnly ? 1 : 12,
+    items,
+  };
+};
 
 // Order matters: the first matching prefix answers, so specific paths come first.
 function standardApi(rank: unknown = { status: "too_harsh", total: 280 }) {
@@ -91,11 +102,47 @@ describe("pairing page, Fragrance mode", () => {
     expect(card.textContent).not.toMatch(/eau de/i);
   });
 
-  it("hides the Owned only switch until Own buttons exist (M5)", async () => {
+  it("filters Owned only on the server, finding owned partners past the loaded page", async () => {
+    setStatus({ ...deepCut, imageUrl: null }, "own");
+    const fetchMock = standardApi();
+    renderAt("/");
+    await screen.findByRole("heading", { name: "Eclaire" });
+    expect(screen.queryByRole("heading", { name: "Deep Cut" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("checkbox", { name: "Owned only" }));
+    const card = (await screen.findByRole("heading", { name: "Deep Cut" })).closest("article")!;
+    expect(within(card).getByLabelText("Rank 150")).toBeInTheDocument(); // the full-list rank
+    expect(within(card).getByText("Owned")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Eclaire" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Showing the 1 you own\./)).toBeInTheDocument();
+
+    const filtered = fetchMock.mock.calls.map(([input]) => new URL(input, "http://test")).find((u) => u.searchParams.get("ownedOnly"));
+    expect(filtered?.searchParams.get("owned")).toBe("42");
+  });
+
+  it("says so when Owned only is on but nothing is owned", async () => {
     standardApi();
     renderAt("/");
-    await screen.findByText("280 fragrances ranked to tone down Club de Nuit Intense Man.");
-    expect(screen.queryByText("Owned only")).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Owned only" }));
+    expect(await screen.findByText("You have not marked any bottles as Owned yet.")).toBeInTheDocument();
+  });
+
+  it("marks a result card Own, showing the badge at once", async () => {
+    standardApi();
+    renderAt("/");
+    const card = (await screen.findByRole("heading", { name: "Eclaire" })).closest("article")!;
+    expect(within(card).queryByText("Owned")).not.toBeInTheDocument();
+    await userEvent.click(within(card).getByRole("button", { name: "Own Eclaire" }));
+    expect(within(card).getByRole("button", { name: "Own Eclaire" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(card).getByText("Owned")).toBeInTheDocument();
+  });
+
+  it("sends the guest id in an X-Guest-Id header", async () => {
+    const fetchMock = standardApi();
+    renderAt("/");
+    await screen.findByRole("heading", { name: "Eclaire" });
+    const headers = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
+    expect(headers["X-Guest-Id"]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 
   it("answers 'too harsh' in the rank finder instead of a missing rank", async () => {

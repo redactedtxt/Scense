@@ -87,6 +87,29 @@ describe.skipIf(!url)("against the loaded catalogue", () => {
     const owned = await request(app).get(`/api/pairing/fragrances/${base}?goal=enhance&owned=${topId}`);
     expect(owned.body.items[0].owned).toBe(true);
     expect(owned.body.items[1].owned).toBe(false);
+    expect(first.body.items[0].id).toBe(topId);
+  });
+
+  it("filters to owned partners across the whole list, not just page 1", async () => {
+    const base = await slugOf("Aventus");
+    // Rank 1 and the last-ranked partner: the last one is never on the first page.
+    const firstPage = await request(app).get(`/api/pairing/fragrances/${base}?goal=enhance`);
+    const lastPage = await request(app).get(`/api/pairing/fragrances/${base}?goal=enhance&page=13`);
+    const top = firstPage.body.items[0];
+    const bottom = lastPage.body.items.at(-1);
+    const res = await request(app).get(
+      `/api/pairing/fragrances/${base}?goal=enhance&owned=${bottom.id},${top.id}&ownedOnly=true`,
+    );
+    expect(res.body).toMatchObject({ total: 299, matching: 2, totalPages: 1 });
+    expect(res.body.items.map((i: { rank: number }) => i.rank)).toEqual([1, 299]);
+    expect(res.body.items.every((i: { owned: boolean }) => i.owned)).toBe(true);
+  });
+
+  it("returns ids in the fragrance list and detail", async () => {
+    const list = await request(app).get("/api/fragrances?q=cool wat");
+    const detail = await request(app).get(`/api/fragrances/${list.body.items[0].slug}`);
+    expect(Number.isInteger(list.body.items[0].id)).toBe(true);
+    expect(detail.body.id).toBe(list.body.items[0].id);
   });
 
   it("rank endpoint agrees with the list, and answers too_harsh for dropped Soften partners", async () => {

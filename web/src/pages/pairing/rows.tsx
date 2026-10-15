@@ -1,8 +1,10 @@
 import { Link } from "react-router";
 import { BottleImage } from "../../components/BottleImage";
+import { CollectionButtons } from "../../components/CollectionButtons";
 import { ArrowIcon } from "../../components/Icons";
 import { ScoreBar, Tag } from "../../components/ui";
 import type { Goal, PairingMatch } from "../../lib/api";
+import { useCollectionStatus } from "../../lib/collection";
 import { padRank } from "../../lib/labels";
 
 // Result rows from the Figma export (.match-card, .note-match-row) at its three widths:
@@ -44,6 +46,9 @@ function RankNumber({ rank }: { rank: number }) {
 
 export function MatchCard({ match, goal, lazy }: { match: PairingMatch; goal: Goal; lazy: boolean }) {
   const href = `/f/${match.slug}`;
+  // The badge reads the guest store, not the API's `owned` flag, so it appears the
+  // moment Own is pressed instead of after the list refetches.
+  const owned = useCollectionStatus(match.id) === "own";
   return (
     <article className={`group ${MATCH_GRID}`}>
       <RankNumber rank={match.rank} />
@@ -57,7 +62,10 @@ export function MatchCard({ match, goal, lazy }: { match: PairingMatch; goal: Go
         </h3>
         <div className="flex flex-wrap items-center gap-2">
           <Tag>{match.dominantFamily}</Tag>
-          {match.owned && <Tag tone="owned">Owned</Tag>}
+          {owned && <Tag tone="owned">Owned</Tag>}
+        </div>
+        <div className="mt-2.5">
+          <CollectionButtons fragrance={match} size="compact" name={match.name} />
         </div>
       </div>
       <div className={SCORE_CELL}>
@@ -85,6 +93,7 @@ export function MatchCardSkeleton() {
         <div className="skeleton h-2.5 w-24" />
         <div className="skeleton mt-[9px] mb-[11px] h-[21px] w-3/4 md:h-7" />
         <div className="skeleton h-[22px] w-24 rounded-full" />
+        <div className="skeleton mt-2.5 h-[26px] w-[132px] rounded-full" />
       </div>
       <div className={SCORE_CELL}>
         <div className="skeleton h-[52px] w-full" />

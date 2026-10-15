@@ -23,10 +23,17 @@ const ownedIds = z
   .transform((text) => (text === "" ? [] : text.split(",")))
   .pipe(z.array(wholeId).max(300));
 
+// z.coerce.boolean() would turn the string "false" into true, so spell the values out.
+const flag = z
+  .enum(["true", "false"])
+  .default("false")
+  .transform((text) => text === "true");
+
 const listQuery = z.object({
   goal: goalSchema,
   page: z.coerce.number().int().min(1).max(10_000).default(1),
   owned: ownedIds,
+  ownedOnly: flag,
 });
 
 const rankQuery = z.object({ goal: goalSchema });
@@ -49,7 +56,7 @@ export function pairingRouter(db: Db, matrices: Matrices): Router {
     const results = rankNotes(inputs, mapped, goal, matrices).map((r) => ({
       note: r.name,
       rank: r.rank,
-      score: round1(r.score),
+      score: round1(r.score as number),
       dominantFamily: familyNames[r.dominantFamilyIndex],
     }));
     res.json({ goal, inputs: inputs.map((n) => n.name), total: results.length, results });
@@ -57,38 +64,36 @@ export function pairingRouter(db: Db, matrices: Matrices): Router {
 
   router.get("/pairing/fragrances/:slug", async (req, res) => {
     const { slug } = parseInput(listParams, req.params);
-    const { goal, page, owned } = parseInput(listQuery, req.query);
+    const { goal, page, owned, ownedOnly } = parseInput(listQuery, req.query);
     const base = await findFragrance(db, slug);
     const ownedSet = new Set(owned);
 
+    // "Owned only" filters in SQL, so it covers the whole ranked list, not just the
+    // pages the browser has loaded (DECISIONS B21). Ranks stay the full-list ranks.
+    const onlyIds = ownedOnly ? owned : null;
     const total = await listSize(db, base.id, goal);
+    const matching = ownedOnly ? await ownedListSize(db, base.id, goal, owned) : total;
     const { rows } = await db.query(
       `SELECT ps.rank, ps.score, p.id, p.slug, p.name, p.brand, p.image_url, fam.name AS family
          FROM pair_scores ps
          JOIN fragrances p ON p.id = ps.partner_id
          JOIN families fam ON fam.id = ${dominantFamilyId("p.profile")}
         WHERE ps.base_id = $1 AND ps.goal = $2
+          AND ($4::int[] IS NULL OR ps.partner_id = ANY($4))
         ORDER BY ps.rank
         LIMIT ${PAGE_SIZE} OFFSET $3`,
-      [base.id, goal, (page - 1) * PAGE_SIZE],
+      [base.id, goal, (page - 1) * PAGE_SIZE, onlyIds],
     );
     res.json({
-      base: { slug: base.slug, name: base.name, brand: base.brand, dominantFamily: base.family },
+      base: { id: base.id, slug: base.slug, name: base.name, brand: base.brand, dominantFamily: base.family },
       goal,
       page,
       pageSize: PAGE_SIZE,
+      // total is always the whole list ("of 214"); matching is what this filter returns.
       total,
-      totalPages: Math.ceil(total / PAGE_SIZE),
-      items: rows.map((r) => ({
-        rank: r.rank,
-        score: round1(r.score),
-        slug: r.slug,
-        name: r.name,
-        brand: r.brand,
-        imageUrl: r.image_url,
-        dominantFamily: r.family,
-        owned: ownedSet.has(r.id),
-      })),
+      matching,
+      totalPages: Math.ceil(matching / PAGE_SIZE),
+      items: rows.map((r) => partnerItem(r, ownedSet)),
     });
   });
 
@@ -118,6 +123,20 @@ export function pairingRouter(db: Db, matrices: Matrices): Router {
   return router;
 }
 
+function partnerItem(r: Record<string, unknown>, ownedSet: Set<number>) {
+  return {
+    id: r.id,
+    rank: r.rank,
+    score: round1(r.score as number),
+    slug: r.slug,
+    name: r.name,
+    brand: r.brand,
+    imageUrl: r.image_url,
+    dominantFamily: r.family,
+    owned: ownedSet.has(r.id as number),
+  };
+}
+
 async function findFragrance(db: Db, slug: string) {
   const { rows } = await db.query(
     `SELECT f.id, f.slug, f.name, f.brand, fam.name AS family
@@ -134,6 +153,16 @@ async function listSize(db: Db, baseId: number, goal: string): Promise<number> {
   const { rows } = await db.query(
     "SELECT count(*)::int AS total FROM pair_scores WHERE base_id = $1 AND goal = $2",
     [baseId, goal],
+  );
+  return rows[0].total;
+}
+
+// How many of the guest's owned bottles appear in this base's list. Soften leaves out
+// partners as harsh as the base, so an owned bottle can be missing from it.
+async function ownedListSize(db: Db, baseId: number, goal: string, owned: number[]): Promise<number> {
+  const { rows } = await db.query(
+    "SELECT count(*)::int AS total FROM pair_scores WHERE base_id = $1 AND goal = $2 AND partner_id = ANY($3)",
+    [baseId, goal, owned],
   );
   return rows[0].total;
 }

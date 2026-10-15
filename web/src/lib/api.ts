@@ -1,10 +1,13 @@
 // Typed wrappers around the pass 1 API (SPEC section 7). Field names match the JSON the
 // API sends (camelCase); stored values stay as the dataset has them ("male", "autumn").
 
+import { getState } from "./guestStore";
+
 export type Goal = "enhance" | "soften";
 export type Gender = "male" | "female" | "unisex";
 
 export type FragranceSummary = {
+  id: number;
   slug: string;
   name: string;
   brand: string;
@@ -48,6 +51,7 @@ export type NotePairing = {
 };
 
 export type PairingMatch = {
+  id: number;
   rank: number;
   score: number;
   slug: string;
@@ -59,11 +63,12 @@ export type PairingMatch = {
 };
 
 export type FragrancePairing = {
-  base: { slug: string; name: string; brand: string; dominantFamily: string };
+  base: { id: number; slug: string; name: string; brand: string; dominantFamily: string };
   goal: Goal;
   page: number;
   pageSize: number;
-  total: number;
+  total: number; // the whole ranked list
+  matching: number; // partners this request's filter returns (total unless ownedOnly)
   totalPages: number;
   items: PairingMatch[];
 };
@@ -85,10 +90,16 @@ export class ApiError extends Error {
   }
 }
 
+// Every request carries the guest id (SPEC section 6). Pass 1 ignores it; pass 2's
+// LLM caps count conversations per guest with it.
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...init,
-    headers: { Accept: "application/json", ...(init?.body ? { "Content-Type": "application/json" } : {}) },
+    headers: {
+      Accept: "application/json",
+      "X-Guest-Id": getState().guestId,
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+    },
   });
   const body = await res.json().catch(() => null);
   if (!res.ok) {
@@ -121,9 +132,16 @@ export const api = {
   pairNotes: (notes: string[], goal: Goal) =>
     request<NotePairing>("/pairing/notes", { method: "POST", body: JSON.stringify({ notes, goal }) }),
 
-  pairFragrance: (slug: string, goal: Goal, page: number, owned: number[]) =>
+  // With ownedOnly, the server returns only the partners whose ids are in `owned`,
+  // searched across the whole ranked list.
+  pairFragrance: (slug: string, goal: Goal, page: number, owned: number[], ownedOnly = false) =>
     request<FragrancePairing>(
-      `/pairing/fragrances/${encodeURIComponent(slug)}${query({ goal, page, owned: owned.join(",") })}`,
+      `/pairing/fragrances/${encodeURIComponent(slug)}${query({
+        goal,
+        page,
+        owned: owned.join(","),
+        ownedOnly: ownedOnly ? "true" : undefined,
+      })}`,
     ),
 
   rank: (slug: string, partnerSlug: string, goal: Goal) =>
