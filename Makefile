@@ -19,8 +19,11 @@ lint:
 migrate:
 	docker compose exec api npm run migrate
 
+# Ingest, build profiles, score every pair, load Postgres (needs `make migrate` first).
+# Windows without make: python pipeline/src/run.py pipeline
 pipeline:
-	@echo "pipeline: not built yet (M2)"
+	python pipeline/src/run.py pipeline
 
+# Rerun profiles, scoring and load after editing scoring.yaml; prints the two top-10 lists.
 tune:
-	@echo "tune: not built yet (M2)"
+	python pipeline/src/run.py tune

@@ -218,3 +218,41 @@ Claude Code adds entries here when it makes a call the spec didn't cover.
 ### B11. Mapping review completed (2026-10-14)
 - **Decision:** Tejas reviewed every `# CHECK` row. Carnation and Anise gained the spicy facet, Opoponax gained sweet, and `aldehydic`/Aldehydes now use Soft Floral:0.6;Floral:0.2;Citrus:0.2. All CHECK markers were cleared.
 - **Why:** The reviewed rows are settled; the `check` column stays empty for future remarks.
+
+### B12. M2 supporting files and Windows commands (2026-10-15)
+- **Extra files beyond the M2 list:** `ingest.py` (SPEC section 4 step 2; `make pipeline` needs it), `pipeline_config.py` (loads and validates every config file), and `run.py` (one entry point). The config module is not named `config.py` because `pipeline/config/` is a folder and Python could import the folder instead.
+- **No `make` on Windows.** `python pipeline/src/run.py pipeline|tune|migrate` does what `make pipeline|tune|migrate` does; the Makefile calls the same script. Run it with the pipeline virtual environment (`pipeline\.venv`).
+- **Pipeline output goes to `pipeline/build/catalogue.parquet`** (gitignored). Nested fields are stored as JSON strings so the file has no pyarrow-specific nesting. `pyarrow` is a new dependency.
+- **Catalogue tests skip when the parquet is missing.** The raw Kaggle file is gitignored, so CI runs the pure tests only; the catalogue tests run locally after `pipeline`.
+
+### B13. Scoring details the spec left open (2026-10-15)
+- **Display score = score / best score in that base's list x 100** (not min-max), so 100 is the best partner and ratios between partners are kept. Ranks come from the raw score; ties break by catalogue order.
+- **A fragrance is never its own partner**, so Enhance has 299 rows per base. Soften has fewer: partners as harsh or harsher are dropped, and a base with no gentler partner has an empty list. `pair_scores` therefore has 134,550 rows, not about 179,000.
+- **"Dominant family" = the largest share in `p`**; a tie goes to the lower ring position. The Club de Nuit test checks the dominant family against Amber, Soft Amber, and Floral Amber.
+- **Note facets are 1 or 0** (tagged or not) before the harshness formula. A fragrance built from notes alone (never happens in the top 300) averages its mapped notes' profiles and facets.
+- **Duplicate note variants are merged per layer.** The same note in both top and base layers stays in both.
+- **Unmapped notes are stored too:** superseded by B16.
+- **`search_vector` is `to_tsvector('simple', name || ' ' || brand)`**, filled by `load.py`. The API search in M3 must use the same `simple` configuration.
+- **Two alias targets are deliberately unmapped:** Pine Needles and Tiare Flower fell outside the 150-note cutoff.
+
+### B14. Enhance score is normalised by self-similarity (2026-10-15)
+- **Decision:** Enhance base score = `pA·M·pB / sqrt(pA·M·pA × pB·M·pB)`. Soften's formula is unchanged.
+- **Why:** Enhance means "more of what you have", so a fragrance and its near-clones should score highest. The plain formula failed the SPEC 3.6 self-score test for 94 of 300 fragrances (1,197 pairs), because diffuse profiles scored higher with a more concentrated partner than with themselves. The SPEC 3.6 test stays as written and now passes.
+- **Effect:** superseded by B17, which kept the normalisation and changed the rest of Enhance.
+- **Rejected:** Weakening the test to compare only whole-profile-distant partners (kept the model, but would have left a score that rewards concentration).
+
+### B15. Soften list totals vary, and a dropped partner gets an answer (2026-10-15)
+- **Decision:** The rank search shows the real list size ("#12 of 214"). A partner that Soften dropped returns a `too_harsh` result, not a missing rank.
+- **Why:** Soften drops partners as harsh or harsher than the base, so "of 299" would be false and a bare "no rank" would look like a bug. Recorded in SPEC.md section 7 for M3.
+
+### B16. Every note is stored; only mapped notes are paired (2026-10-15)
+- **Decision:** `notes` holds every note in the catalogue (394 today: 150 mapped, 244 not). `mapped` marks the ones in `note_map.csv`; profile, facets, and harshness are null for the rest, enforced by a CHECK constraint. `fragrance_notes` links all of them. Note pairing and note autocomplete use mapped notes only.
+- **Why:** The fragrance page must show a fragrance's full pyramid, but unmapped notes have no wheel profile.
+- **Migration:** `001_init.sql` was edited in place (nothing was deployed); the dev database was dropped and recreated.
+
+### B17. Enhance retuned for near-clones (2026-10-15)
+Diagnosed with Club de Nuit Intense Man, a well-known Aventus alternative, which sat at #221 of 299 in Aventus's Enhance list. Five variants were tried in memory before choosing (A: no penalty, B: sharper table, C: facets, D: B + C, E: all three); E put Club de Nuit at #2 and Afnan Supremacy Collector's Edition, another Aventus alternative, at #5. Both SPEC 3.6 tests passed under every variant.
+- **Removed the Enhance strength penalty.** A stronger near-clone amplifies the base, which is what Enhance means. The ×0.8 takeover rule predates that definition, and it alone pushed Club de Nuit (strength 4 vs Aventus 2) from similarity 0.94 to about #221; removing only the penalty moved it to #49.
+- **Sharpened the Enhance table to 1.0, 0.6, 0.3, 0.1, 0, 0, 0, 0.** With the old table (1.0 ... 0.05) scores were flat: 35 of 299 partners above 0.95 similarity to Aventus, median 0.87, so one small multiplier reshuffled the list. The old matrix also had a negative eigenvalue (−0.054), so "a fragrance scores highest with itself" held only by luck of the data. The new matrix's smallest eigenvalue is +0.2, and a test now requires the Enhance matrix (and the 20×20 kernel) to stay positive definite.
+- **Facets joined fragrance similarity** (14 families + 6 facets, `enhance.facet_weight: 1.0`, each facet matched only to itself). Aventus and Club de Nuit differ in their lead family (Fruity vs Citrus) but share their character: smoky 0.21 vs 0.22 and a sweet facet. Families alone missed that.
+- **Notes stay on families only.** A note's facets are 0 or 1, so on the same scale as family shares they would outweigh the families and rank notes by facet tag alone.

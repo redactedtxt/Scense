@@ -130,7 +130,7 @@ The wheel lacks gourmand, spicy, and an intensity axis. Facets patch that. Store
 
 - `accord_map.csv` columns: `accord, family_weights, facets, check`. Example row: `warm spicy, "Woody Amber:0.6;Soft Amber:0.4", "spicy"`. Weights in a row sum to 1. Cover every accord that appears in the filtered catalogue.
 - `note_map.csv` columns: `note, family_weights, facets, check`. Cover the 150 most frequent **canonical** notes in the filtered catalogue (frequency = number of catalogue fragrances containing the note, after aliases are applied; ties at the cutoff go to the note with the larger summed weight).
-- `note_aliases.csv` columns: `alias, canonical`. Maps spelling and origin variants to one canonical note ("Vanille", "Madagascar Vanilla", "Bourbon Vanilla" → "Vanilla"; "Virginia Cedar" → "Cedar"). Ingest applies it to every note name before anything else, and a fragrance that lists two variants of one note counts that note once (keep the highest weight). Notes outside `note_map.csv` after aliasing are ignored for note pairing but still shown on the fragrance page.
+- `note_aliases.csv` columns: `alias, canonical`. Maps spelling and origin variants to one canonical note ("Vanille", "Madagascar Vanilla", "Bourbon Vanilla" → "Vanilla"; "Virginia Cedar" → "Cedar"). Ingest applies it to every note name before anything else, and a fragrance that lists two variants of one note counts that note once (keep the highest weight). Notes outside `note_map.csv` after aliasing are ignored for note pairing and autocomplete but still shown on the fragrance page. They are stored in `notes` with `mapped = false` and no profile.
 - The `check` column holds `# CHECK` remarks for the human reviewer. **Pipeline code must ignore it** when loading (read only the named columns).
 
 Draft both files from perfumery knowledge, then **stop and ask Tejas to review them** before moving on. Mark any row you feel unsure about with a `# CHECK` comment column.
@@ -157,27 +157,33 @@ Affinity tables (in `scoring.yaml`):
 
 | d | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
 |---|---|---|---|---|---|---|---|---|
-| enhance | 1.0 | 0.9 | 0.7 | 0.45 | 0.25 | 0.15 | 0.1 | 0.05 |
+| enhance | 1.0 | 0.6 | 0.3 | 0.1 | 0 | 0 | 0 | 0 |
 | soften | 0.2 | 0.4 | 0.6 | 0.8 | 0.9 | 0.85 | 0.75 | 0.6 |
 
 Base score for base A and partner B:
 
 ```
-base(A, B) = Σᵢ Σⱼ pAᵢ × pBⱼ × M_goal[d(i, j)]
+raw(A, B) = Σᵢ Σⱼ pAᵢ × pBⱼ × M_goal[d(i, j)]   =  pA · M · pB
 ```
 
-Precompute the 14 × 14 matrix `M_goal[d(i,j)]` once so this becomes `pA · M · pB`.
+Precompute the 14 × 14 matrix `M_goal[d(i,j)]` once per goal.
+
+- **Soften:** `base(A, B) = raw(A, B)`.
+- **Enhance:** a cosine-style similarity. Enhance means "more of what you have", so a fragrance and its near-clones must score highest.
+  - Fragrances: `x = [p (14 families), facets (6)]` and `K` = block-diagonal(`M_enhance`, `facet_weight × I₆`), so a facet only matches the same facet. `base(A, B) = xA·K·xB / sqrt(xA·K·xA × xB·K·xB)`. `facet_weight` (1.0) lives in `scoring.yaml` under `enhance`.
+  - Notes: families only, `base(A, B) = pA·M·pB / sqrt(pA·M·pA × pB·M·pB)`.
+  - The Enhance table must keep `M_enhance` positive definite (a pytest checks it). Then a fragrance scores exactly 1 with itself and below 1 with anything different.
 
 Goal rules:
 
-- **Enhance:** score = base. If strength(B) > strength(A) + 1, multiply by 0.8 (the partner takes over).
+- **Enhance:** score = base. No strength penalty: a stronger near-clone amplifies the base.
 - **Soften:** drop B if harshness(B) ≥ harshness(A). Otherwise score = base × (1 + harshness(A) - harshness(B)). If strength(B) < strength(A) - 1, multiply by 0.7 (the partner gets buried).
 
 Scores get normalised to 0 to 100 within each base fragrance's list for display. Every constant above lives in `scoring.yaml`. Nothing gets hardcoded.
 
-**Notes** use the same formula. A note's profile comes from `note_map.csv`, its harshness from section 3.4 step 3. Multi-note input: average the input notes' profiles and harshness. Exclude input notes from results. Return single notes only. The API computes note scores at request time (150 notes is cheap).
+**Notes** use the same formulas over mapped notes only; Enhance uses the families-only similarity above. A note's profile comes from `note_map.csv`, its harshness from section 3.4 step 3. Multi-note input: average the input notes' profiles and harshness. Exclude input notes from results. Return single notes only. The API computes note scores at request time (150 notes is cheap).
 
-**Fragrances** get precomputed: about 300 × 299 × 2 rows in `pair_scores` with a rank per (base, goal).
+**Fragrances** get precomputed: up to 300 × 299 × 2 rows in `pair_scores` with a rank per (base, goal). Enhance lists every other fragrance (299 rows per base). Soften lists only partners gentler than the base, so its totals vary by base (134,550 rows in total for the current catalogue).
 
 ### 3.6 Sanity tests the pipeline must pass
 
@@ -245,9 +251,11 @@ CREATE INDEX fragrances_search_idx ON fragrances USING GIN (search_vector);
 CREATE TABLE notes (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
-  profile REAL[14] NOT NULL,
-  facets JSONB NOT NULL,
-  harshness REAL NOT NULL
+  mapped BOOLEAN NOT NULL,            -- true = in note_map.csv; only mapped notes are paired and autocompleted
+  profile REAL[14],                   -- null when not mapped
+  facets JSONB,                       -- null when not mapped
+  harshness REAL,                     -- null when not mapped
+  CHECK (mapped = (profile IS NOT NULL AND facets IS NOT NULL AND harshness IS NOT NULL))
 );
 
 CREATE TABLE fragrance_notes (
@@ -359,10 +367,10 @@ All responses JSON. Validate every body and query with Zod. Errors return `{ err
 | GET | `/api/health` | DB ping, for the deploy check |
 | GET | `/api/fragrances?q=&gender=&family=&page=` | Full-text search on name and brand, 24 per page. `gender` is `male`, `female`, or `unisex` |
 | GET | `/api/fragrances/:slug` | Full detail: notes by layer, accords, family profile, strength, tags, rating |
-| GET | `/api/notes?q=` | Autocomplete |
-| POST | `/api/pairing/notes` | Body `{ notes: string[], goal }`. Returns ranked notes with score 0-100 and the dominant family of each |
+| GET | `/api/notes?q=` | Autocomplete. Mapped notes only (`mapped = true`) |
+| POST | `/api/pairing/notes` | Body `{ notes: string[], goal }`. Mapped notes only; rejects an unmapped input note. Returns ranked notes with score 0-100 and the dominant family of each |
 | GET | `/api/pairing/fragrances/:slug?goal=&page=&owned=` | Ranked partners from `pair_scores`. `owned` = comma list of IDs to flag |
-| GET | `/api/pairing/fragrances/:slug/rank/:partnerSlug?goal=` | Returns `{ rank, total, score }` for the "#38 of 299" search |
+| GET | `/api/pairing/fragrances/:slug/rank/:partnerSlug?goal=` | Returns `{ status: "ranked", rank, total, score }` for the "#38 of 299" search. `total` is the real size of that base's list for the goal, so Soften shows e.g. "#12 of 214". If the partner is not in the list (Soften only: it is as harsh or harsher than the base), return `{ status: "too_harsh", total }` and the UI says "too harsh to soften this base". Never a missing rank or a 404 for a valid slug |
 | GET | `/api/families` | The 14 families for the About page and profile card |
 
 ### Pass 2
