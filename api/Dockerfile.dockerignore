@@ -1,0 +1,6 @@
+# The build context is the repo root (the image needs pipeline/config/scoring.yaml),
+# so send Docker only what the API image uses, not the Kaggle data or the web app.
+*
+!api
+!pipeline/config/scoring.yaml
+**/node_modules

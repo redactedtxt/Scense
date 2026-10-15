@@ -549,7 +549,7 @@ Stop after each one. Report: what you built, files to read first, commands to ru
 | M3 | Pass 1 API | All pass 1 endpoints with tests |
 | M4 | Pairing UI, browse, fragrance pages, about page | Full pass 1 flow works in the browser |
 | M5 | Guest mode | Own/Want persist across reloads; storage failure banner works |
-| M6 | Production deploy | Live HTTPS site; deploy on push to `main`; nightly backup runs |
+| M6 | Production deploy | Live HTTPS site; deploy on push to `main`; nightly backup runs. The API image carries its own copy of `pipeline/config/scoring.yaml` (built from the repo root: `docker build -f api/Dockerfile .`), so `docker-compose.prod.yml` and `deploy.yml` must build the API with the repo root as context and mount nothing |
 
 ### Pass 2
 | # | Milestone | Done when |

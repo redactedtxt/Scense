@@ -20,7 +20,9 @@ services:
 
   api:
     build:
-      context: ./api
+      # Repo root, so the image can include pipeline/config/scoring.yaml.
+      context: .
+      dockerfile: api/Dockerfile
       target: dev
     environment:
       DATABASE_URL: postgres://scense:${POSTGRES_PASSWORD:-scense_dev}@db:5432/scense
@@ -31,6 +33,8 @@ services:
     volumes:
       - ./api:/app
       - ./db:/db
+      # Dev only: overlay the image's copy so a tuning edit shows up without a rebuild.
+      - ./pipeline/config:/pipeline/config:ro
       - /app/node_modules
     depends_on:
       db:

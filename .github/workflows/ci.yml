@@ -52,5 +52,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build --target prod -t scense-api api
+      - run: docker build -f api/Dockerfile --target prod -t scense-api .
       - run: docker build --target build -t scense-web web
