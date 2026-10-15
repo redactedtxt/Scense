@@ -1,0 +1,34 @@
+# Every tunable number in the pairing model lives here. Change a value, then run
+# the tune command (`make tune`) to rebuild profiles, scores and the database.
+
+# Affinity by ring distance d = 0..7 (SPEC 3.5). Enhance rewards close families,
+# Soften rewards families far round the ring.
+affinity:
+  # Enhance must stay positive definite (a test checks it), so a fragrance always
+  # scores highest with itself.
+  enhance: [1.0, 0.6, 0.3, 0.1, 0, 0, 0, 0]
+  soften:  [0.2, 0.4, 0.6, 0.8, 0.9, 0.85, 0.75, 0.6]
+
+# Enhance has no strength penalty: a stronger near-clone amplifies the base.
+# Fragrance Enhance similarity uses the 14 families plus the 6 facets; each facet
+# matches only itself, scaled by facet_weight. Notes use families only.
+enhance:
+  facet_weight: 1.0
+
+# A "gap" is how many strength steps the partner may differ by before the
+# penalty multiplier applies.
+soften:
+  strength_gap: 1          # partner weaker than base by more than this ...
+  buried_penalty: 0.7      # ... gets buried, so multiply by this
+
+# Strength 1..4 comes from the mean of the longevity and sillage vote scores
+# (each 0..1). Cutoffs [c1, c2, c3]: < c1 -> 1, < c2 -> 2, < c3 -> 3, else 4.
+strength_cutoffs: [0.46, 0.54, 0.62]
+# ingest.py fails if a catalogue fragrance has fewer longevity + sillage votes.
+min_strength_votes: 50
+
+# How many fragrances (by rating votes) make up the catalogue.
+catalogue_size: 300
+
+# Tolerance for "weights sum to 1" checks on the mapping files and profiles.
+weight_sum_tolerance: 0.000001

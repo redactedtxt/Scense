@@ -1,3 +1,4 @@
 pandas
+pyarrow
 psycopg[binary]
 PyYAML

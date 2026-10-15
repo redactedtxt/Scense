@@ -1,0 +1,9 @@
+# The six facets that patch the wheel's gaps. `harshness_nudge` is added to a
+# fragrance's harshness in proportion to the facet's value (0 to 1).
+facets:
+  - { name: sweet,   harshness_nudge: -0.20 }
+  - { name: creamy,  harshness_nudge: -0.20 }
+  - { name: powdery, harshness_nudge: -0.15 }
+  - { name: spicy,   harshness_nudge: 0.15 }
+  - { name: smoky,   harshness_nudge: 0.25 }
+  - { name: sharp,   harshness_nudge: 0.20 }
