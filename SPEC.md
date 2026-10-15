@@ -369,7 +369,7 @@ All responses JSON. Validate every body and query with Zod. Errors return `{ err
 | GET | `/api/fragrances/:slug` | Full detail: notes by layer, accords, family profile, strength, tags, rating |
 | GET | `/api/notes?q=` | Autocomplete. Mapped notes only (`mapped = true`) |
 | POST | `/api/pairing/notes` | Body `{ notes: string[], goal }`. Mapped notes only; rejects an unmapped input note. Returns ranked notes with score 0-100 and the dominant family of each |
-| GET | `/api/pairing/fragrances/:slug?goal=&page=&owned=` | Ranked partners from `pair_scores`. `owned` = comma list of IDs to flag |
+| GET | `/api/pairing/fragrances/:slug?goal=&page=&owned=&ownedOnly=` | Ranked partners from `pair_scores`. `owned` = comma list of IDs to flag. `ownedOnly=true` returns only those partners, searched across the whole list, with their full-list ranks; `total` stays the whole list size and `matching` counts what the filter returns |
 | GET | `/api/pairing/fragrances/:slug/rank/:partnerSlug?goal=` | Returns `{ status: "ranked", rank, total, score }` for the "#38 of 299" search. `total` is the real size of that base's list for the goal, so Soften shows e.g. "#12 of 214". If the partner is not in the list (Soften only: it is as harsh or harsher than the base), return `{ status: "too_harsh", total }` and the UI says "too harsh to soften this base". Never a missing rank or a 404 for a valid slug |
 | GET | `/api/families` | The 14 families for the About page and profile card |
 

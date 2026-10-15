@@ -49,7 +49,7 @@ describe("GET /api/fragrances", () => {
   const listRoutes = (total: number) =>
     [
       [/count\(\*\)/, [{ total }]],
-      [/FROM fragrances f/, [{ slug: "a-b-2000", name: "B", brand: "A", gender: "male", release_year: 2000,
+      [/FROM fragrances f/, [{ id: 7, slug: "a-b-2000", name: "B", brand: "A", gender: "male", release_year: 2000,
         image_url: null, community_rating: 4.1, rating_votes: 900, strength: 3, family: "Woods" }]],
       [/FROM families WHERE lower/, [{ id: 3 }]],
     ] as Parameters<typeof appWith>[0];
@@ -59,7 +59,7 @@ describe("GET /api/fragrances", () => {
     const res = await request(app).get("/api/fragrances?page=2");
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ page: 2, pageSize: 24, total: 50, totalPages: 3 });
-    expect(res.body.items[0]).toMatchObject({ slug: "a-b-2000", dominantFamily: "Woods", releaseYear: 2000 });
+    expect(res.body.items[0]).toMatchObject({ id: 7, slug: "a-b-2000", dominantFamily: "Woods", releaseYear: 2000 });
     expect(calls.at(-1)!.params).toEqual([null, null, null, 24]); // page 2 skips 24
   });
 
@@ -107,6 +107,7 @@ describe("GET /api/fragrances/:slug", () => {
     ]);
     const res = await request(app).get("/api/fragrances/a-b-2000");
     expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 7, slug: "a-b-2000" }); // the Own/Want buttons store this id
     expect(res.body.notes.top).toEqual([{ name: "Lemon", mapped: true }]);
     expect(res.body.notes.base).toEqual([{ name: "Odd Resin", mapped: false }]); // unmapped still shown
     expect(res.body.notes.heart).toEqual([]);
@@ -180,19 +181,21 @@ describe("POST /api/pairing/notes", () => {
 describe("GET /api/pairing/fragrances/:slug", () => {
   const base = { id: 1, slug: "base", name: "Base", brand: "B", family: "Woods" };
   const partner = { rank: 1, score: 100, id: 2, slug: "p", name: "P", brand: "Q", image_url: null, family: "Amber" };
+  // The whole list has 30 partners; 1 of them is in any owned list (see ownedListSize).
+  const counts = (sqlParams: unknown[]) => [{ total: sqlParams.length === 3 ? 1 : 30 }];
   const routes = [
     [/WHERE f.slug/, [base]],
-    [/count\(\*\)/, [{ total: 30 }]],
+    [/count\(\*\)/, counts],
     [/FROM pair_scores ps/, [partner]],
   ] as Parameters<typeof appWith>[0];
 
-  it("returns ranked partners and flags owned ones", async () => {
+  it("returns ranked partners with their ids and flags owned ones", async () => {
     const { app } = appWith(routes);
     const res = await request(app).get("/api/pairing/fragrances/base?goal=soften&owned=2,9");
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ goal: "soften", page: 1, total: 30, totalPages: 2 });
-    expect(res.body.base).toEqual({ slug: "base", name: "Base", brand: "B", dominantFamily: "Woods" });
-    expect(res.body.items[0]).toMatchObject({ rank: 1, score: 100, slug: "p", owned: true });
+    expect(res.body).toMatchObject({ goal: "soften", page: 1, total: 30, matching: 30, totalPages: 2 });
+    expect(res.body.base).toEqual({ id: 1, slug: "base", name: "Base", brand: "B", dominantFamily: "Woods" });
+    expect(res.body.items[0]).toMatchObject({ id: 2, rank: 1, score: 100, slug: "p", owned: true });
   });
 
   it("marks partners not in the owned list as not owned", async () => {
@@ -201,12 +204,29 @@ describe("GET /api/pairing/fragrances/:slug", () => {
     expect(res.body.items[0].owned).toBe(false);
   });
 
+  it("does not filter unless ownedOnly is true", async () => {
+    const { app, calls } = appWith(routes);
+    await request(app).get("/api/pairing/fragrances/base?goal=enhance&owned=2&ownedOnly=false");
+    expect(calls.at(-1)!.params[3]).toBeNull();
+  });
+
+  it("filters to owned partners in SQL with ownedOnly, keeping the whole-list total", async () => {
+    const { app, calls } = appWith(routes);
+    const res = await request(app).get("/api/pairing/fragrances/base?goal=enhance&owned=2,9&ownedOnly=true");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ total: 30, matching: 1, totalPages: 1 });
+    const list = calls.at(-1)!;
+    expect(list.sql).toContain("ANY($4)");
+    expect(list.params[3]).toEqual([2, 9]); // only these partners can come back
+  });
+
   it.each([
     ["missing goal", "/api/pairing/fragrances/base"],
     ["bad goal", "/api/pairing/fragrances/base?goal=x"],
     ["bad owned list", "/api/pairing/fragrances/base?goal=enhance&owned=1,abc"],
     ["negative owned id", "/api/pairing/fragrances/base?goal=enhance&owned=-4"],
     ["page zero", "/api/pairing/fragrances/base?goal=enhance&page=0"],
+    ["ownedOnly not true or false", "/api/pairing/fragrances/base?goal=enhance&ownedOnly=yes"],
   ])("returns 400 for %s", async (_label, url) => {
     const { app } = appWith(routes);
     expect((await request(app).get(url)).status).toBe(400);

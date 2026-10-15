@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, ScrollRestoration } from "react-router";
+import { useStorageBlocked } from "../lib/collection";
 import { Logo } from "./Logo";
 
-// Only pages that exist get a link. Chat, Concierge, Collection, and Sign in arrive in
-// later milestones (M5 and pass 2) and join this list then.
+// Only pages that exist get a link. Chat, Concierge, and Sign in arrive in pass 2 and
+// join this list then.
 const NAV_ITEMS = [
   { to: "/", label: "Pair" },
   { to: "/browse", label: "Browse" },
+  { to: "/me", label: "Collection" },
   { to: "/about", label: "About" },
 ];
 
@@ -23,6 +25,7 @@ export function Layout() {
         Skip to content
       </a>
       <Header />
+      <StorageBanner />
       <main id="main" tabIndex={-1} className={`${PAGE_WIDTH} flex-1 focus:outline-none`}>
         <Outlet />
       </main>
@@ -84,6 +87,19 @@ function Header() {
         </nav>
       </div>
     </header>
+  );
+}
+
+// SPEC section 6: guestStore fell back to memory, so say so on every page.
+function StorageBanner() {
+  const blocked = useStorageBlocked();
+  if (!blocked) return null;
+  return (
+    <div role="status" className="border-b border-gold-line bg-chip-on">
+      <p className={`${PAGE_WIDTH} m-0 py-2.5 text-[11px] leading-snug text-chip-on-text`}>
+        Your browser blocked storage, so your collection won't persist.
+      </p>
+    </div>
   );
 }
 

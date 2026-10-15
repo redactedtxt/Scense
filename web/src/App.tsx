@@ -4,10 +4,11 @@ import { Layout } from "./components/Layout";
 import { AboutPage } from "./pages/AboutPage";
 import { BrowsePage } from "./pages/BrowsePage";
 import { FragrancePage } from "./pages/FragrancePage";
+import { MePage } from "./pages/MePage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { PairingPage } from "./pages/pairing/PairingPage";
 
-// Pass 1 pages. /chat, /concierge, /me, /login, and /signup arrive in later milestones.
+// Pass 1 pages. /chat, /concierge, /login, and /signup arrive in pass 2.
 export const routes: RouteObject[] = [
   {
     element: <Layout />,
@@ -15,6 +16,7 @@ export const routes: RouteObject[] = [
       { path: "/", element: <PairingPage /> },
       { path: "/browse", element: <BrowsePage /> },
       { path: "/f/:slug", element: <FragrancePage /> },
+      { path: "/me", element: <MePage /> },
       { path: "/about", element: <AboutPage /> },
       { path: "*", element: <NotFoundPage /> },
     ],

@@ -1,7 +1,7 @@
-import { useRef, useState, type KeyboardEvent } from "react";
+import { useRef, useState } from "react";
 import { BottleImage } from "../../components/BottleImage";
 import { Combobox, SuggestionRow } from "../../components/Combobox";
-import { Segmented } from "../../components/ui";
+import { Segmented, TextTabs } from "../../components/ui";
 import type { FragranceDetail, Goal } from "../../lib/api";
 import { useFragranceSuggestions, useNoteSuggestions } from "../../lib/queries";
 import { MAX_NOTES, type Mode } from "./usePairingParams";
@@ -36,7 +36,15 @@ export function PairingDesk(props: Props) {
       <div className="grid grid-cols-1 gap-[26px] sm:grid-cols-[minmax(0,1.5fr)_minmax(280px,0.7fr)] sm:gap-[50px]">
         <div>
           <p className="kicker">01 — Begin with</p>
-          <ModeTabs mode={props.mode} onChange={props.onModeChange} />
+          <div className="mt-[13px]">
+            <TextTabs
+              label="Begin with"
+              tabs={MODES}
+              value={props.mode}
+              onChange={props.onModeChange}
+              panelId="pairing-panel"
+            />
+          </div>
         </div>
         <div className="border-t border-line pt-6 sm:border-0 sm:pt-0">
           <p className="kicker">02 — I want to</p>
@@ -53,47 +61,6 @@ export function PairingDesk(props: Props) {
         )}
       </div>
     </section>
-  );
-}
-
-// .text-tabs, with the WAI-ARIA tabs keyboard model: one tab stop, arrow keys switch.
-function ModeTabs({ mode, onChange }: { mode: Mode; onChange: (mode: Mode) => void }) {
-  const refs = useRef<(HTMLButtonElement | null)[]>([]);
-
-  function onKeyDown(event: KeyboardEvent, index: number) {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-    const next = (index + (event.key === "ArrowRight" ? 1 : -1) + MODES.length) % MODES.length;
-    onChange(MODES[next]!.value);
-    refs.current[next]?.focus();
-  }
-
-  return (
-    <div role="tablist" aria-label="Begin with" className="mt-[13px] flex gap-[30px]">
-      {MODES.map((tab, index) => {
-        const selected = tab.value === mode;
-        return (
-          <button
-            key={tab.value}
-            ref={(el) => {
-              refs.current[index] = el;
-            }}
-            id={`tab-${tab.value}`}
-            type="button"
-            role="tab"
-            aria-selected={selected}
-            aria-controls="pairing-panel"
-            tabIndex={selected ? 0 : -1}
-            onClick={() => onChange(tab.value)}
-            onKeyDown={(event) => onKeyDown(event, index)}
-            className={`cursor-pointer border-b pb-[7px] font-display text-[27px] transition-colors ${
-              selected ? "border-gold-kicker text-text-bright" : "border-transparent text-faint hover:text-muted"
-            }`}
-          >
-            {tab.label}
-          </button>
-        );
-      })}
-    </div>
   );
 }
 

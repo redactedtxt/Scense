@@ -27,6 +27,7 @@ export function toPrefixQuery(text: string): string | null {
 
 function summary(r: Record<string, unknown>) {
   return {
+    id: r.id,
     slug: r.slug,
     name: r.name,
     brand: r.brand,
@@ -63,7 +64,7 @@ export function fragrancesRouter(db: Db): Router {
     const count = await db.query(`SELECT count(*)::int AS total ${from}`, filters);
     const total: number = count.rows[0].total;
     const { rows } = await db.query(
-      `SELECT f.slug, f.name, f.brand, f.gender, f.release_year, f.image_url,
+      `SELECT f.id, f.slug, f.name, f.brand, f.gender, f.release_year, f.image_url,
               f.community_rating, f.rating_votes, f.strength, fam.name AS family
          ${from}
         ORDER BY f.rating_votes DESC, f.id

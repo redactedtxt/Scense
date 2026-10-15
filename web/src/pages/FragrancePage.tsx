@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import { BottleImage } from "../components/BottleImage";
+import { CollectionButtons } from "../components/CollectionButtons";
 import { FamilyWheel } from "../components/FamilyWheel";
 import { ArrowIcon } from "../components/Icons";
 import { FamilyTag, Notice } from "../components/ui";
@@ -17,8 +18,7 @@ const LAYERS: { key: Layer; label: string }[] = [
 ];
 const STRENGTH_STEPS = 4;
 
-// "/f/:slug": one fragrance. Want/Own buttons arrive with guest mode in M5, and
-// written reviews in pass 2.
+// "/f/:slug": one fragrance. Written reviews arrive in pass 2.
 export function FragrancePage() {
   const { slug = "" } = useParams();
   const fragrance = useFragrance(slug);
@@ -87,12 +87,15 @@ function Summary({ f }: { f: FragranceDetail }) {
           </dd>
         </div>
       </dl>
-      <Link
-        to={`/?f=${f.slug}`}
-        className="mt-9 inline-flex h-[46px] items-center gap-3 bg-gold-deep px-6 text-[10px] font-semibold tracking-label text-on-gold uppercase transition-colors hover:bg-gold"
-      >
-        Pair this <ArrowIcon className="stroke-on-gold" />
-      </Link>
+      <div className="mt-9 flex flex-wrap items-center gap-3">
+        <Link
+          to={`/?f=${f.slug}`}
+          className="inline-flex h-[46px] items-center gap-3 bg-gold-deep px-6 text-[10px] font-semibold tracking-label text-on-gold uppercase transition-colors hover:bg-gold"
+        >
+          Pair this <ArrowIcon className="stroke-on-gold" />
+        </Link>
+        <CollectionButtons fragrance={f} size="large" />
+      </div>
       <p className="mt-3 mb-0 text-[10px] text-dim">Strength comes from community longevity and sillage votes.</p>
     </div>
   );

@@ -28,6 +28,8 @@ services:
       DATABASE_URL: postgres://scense:${POSTGRES_PASSWORD:-scense_dev}@db:5432/scense
       CORS_ORIGIN: http://localhost:5173
       PORT: "3000"
+      # Same reason as web below: `tsx watch` uses chokidar, which reads this and polls.
+      CHOKIDAR_USEPOLLING: "true"
     ports:
       - "3000:3000"
     volumes:
