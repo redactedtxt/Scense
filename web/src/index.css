@@ -1,26 +1,104 @@
 @import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@400;500;600&display=swap");
 @import "tailwindcss";
 
-/* Design tokens pulled from design/figma-make/src/index.css. Every page shares these. */
+/*
+ * Design tokens pulled from design/figma-make/src/index.css. Every page builds from these.
+ * The export uses about 60 hex values; near-identical shades (for example #77736c,
+ * #77736d, #726e67) share one token so the palette stays small enough to reason about.
+ */
 @theme {
+  /* The export switches layout at max-width 640px and 900px. Tailwind breakpoints are
+     min-width, so sm starts at 641px and md at 901px. */
+  --breakpoint-sm: 641px;
+  --breakpoint-md: 901px;
+
   --font-display: "Cormorant Garamond", serif;
   --font-sans: "Inter", sans-serif;
 
-  --color-ink: #0b0b0a;
-  --color-panel: #171715;
-  --color-line: #2b2a27;
-  --color-line-strong: #35322d;
+  /* Surfaces, darkest to lightest */
+  --color-ink: #0b0b0a; /* page */
+  --color-ink-raised: #11110f; /* mobile nav sheet */
+  --color-sunken: #121210; /* row hover */
+  --color-panel-alt: #151412; /* rank finder */
+  --color-panel: #171715; /* pairing desk */
+  --color-frame: #1c1b18; /* bottle frame */
+  --color-frame-alt: #23221f; /* mini bottle */
+  --color-chip-on: #2a2117; /* selected note chip */
+  --color-paper: #b8ae9c; /* behind bottle photos (their white multiplies to this) */
+
+  /* Lines */
+  --color-line: #2b2a27; /* header, rows, footer */
+  --color-line-strong: #35322d; /* list top, desk, finder */
+  --color-line-control: #3b3934; /* segmented, tags, chips, icon buttons */
+  --color-line-input: #4a453c; /* search underlines */
+  --color-line-switch: #514d46;
+
+  /* Text, brightest to faintest */
+  --color-text-bright: #f0eadd; /* active tab, nav hover */
   --color-text: #ede6d8;
-  --color-muted: #8f8b83;
-  --color-faint: #5e5a53;
-  --color-gold: #c5934e;
-  --color-gold-bright: #d3b078;
-  --color-gold-deep: #a87534;
+  --color-text-input: #e6dfd3;
+  --color-chip-on-text: #ddc49f;
+  --color-soft: #969189; /* intro copy */
+  --color-muted: #8f8b83; /* nav, chips */
+  --color-dim: #77736c; /* summaries, tags */
+  --color-faint: #64615c; /* placeholders, inactive tabs */
+  --color-ghost: #56534e; /* footer, fine print */
+
+  /* Gold accents */
+  --color-gold-bright: #d3b078; /* scores, emphasis */
+  --color-gold-pale: #cba86f; /* hero em */
+  --color-gold-rank: #c49a60; /* rank numbers */
+  --color-gold: #c5934e; /* focus ring, active underline */
+  --color-gold-kicker: #b98b4c; /* kickers, eyebrows */
+  --color-gold-deep: #a87534; /* selected segment, filled controls */
+  --color-gold-icon: #9e7946; /* line icons */
+  --color-gold-line: #77613e; /* owned tag border, sign-in underline */
+  --color-gold-shadow: #5a3d1c; /* switch track on */
+  --color-gold-dark: #6d431c; /* score bar start */
+  --color-on-gold: #130f0a; /* text on a gold fill */
+
+
+  /* Letter spacing used by the small uppercase labels */
+  --tracking-kicker: 0.2em;
+  --tracking-label: 0.13em;
+  --tracking-tag: 0.09em;
+  --tracking-display: -0.045em;
+  --tracking-heading: -0.035em;
+
+  /* Fixed heights the layout reserves so nothing shifts while data loads */
+  --spacing-header: 84px;
+  --spacing-header-sm: 72px;
+}
+
+/*
+ * Family tints for placeholder bottles, wheel charts, and family dots: muted takes on the
+ * usual fragrance-wheel colours, in ring order. "static" keeps them in the CSS even though
+ * no utility class uses them; code reads them by name (lib/labels.ts familyColor).
+ */
+@theme static {
+  --color-family-soft-amber: #c99a6b;
+  --color-family-amber: #b9783a;
+  --color-family-woody-amber: #94603a;
+  --color-family-woods: #8a6c48;
+  --color-family-mossy-woods: #6f7448;
+  --color-family-dry-woods: #6c5544;
+  --color-family-aromatic-fougere: #7f8c6b;
+  --color-family-citrus: #c8b45c;
+  --color-family-water: #6f929b;
+  --color-family-green: #7f9b5d;
+  --color-family-fruity: #bb6b5d;
+  --color-family-floral: #c48a9b;
+  --color-family-soft-floral: #c6a8b3;
+  --color-family-floral-amber: #a8676f;
 }
 
 :root {
   color-scheme: dark;
   font-synthesis: none;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
@@ -34,8 +112,65 @@ body {
     var(--color-ink);
 }
 
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
 a:focus-visible,
-button:focus-visible {
+button:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
   outline: 2px solid var(--color-gold);
   outline-offset: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}
+
+/* Small uppercase gold label above headings ("The art of fragrance layering"). */
+@utility kicker {
+  margin: 0;
+  color: var(--color-gold-kicker);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-kicker);
+  text-transform: uppercase;
+}
+
+/* Small uppercase grey label ("Layering score", tags). */
+@utility label-caps {
+  font-size: 8px;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+/* Bottle photos sit on white; this warms them toward the page's sepia tone. */
+@utility bottle-photo {
+  filter: sepia(0.18) saturate(0.68) contrast(1.02);
+}
+
+/* Loading shimmer for skeletons. Static under reduced motion. */
+@utility skeleton {
+  background: linear-gradient(90deg, var(--color-frame) 0%, var(--color-frame-alt) 50%, var(--color-frame) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
 }
