@@ -268,3 +268,23 @@ Diagnosed with Club de Nuit Intense Man, a well-known Aventus alternative, which
 - **Scores are rounded to one decimal** in responses; ranks come from the unrounded values.
 - **Up to 10 input notes** per pairing request, 300 ids in `owned`.
 - **Tests:** unit and fake-database endpoint tests run everywhere (CI included). `integration.test.ts` runs the real SQL against the loaded catalogue and is skipped unless `TEST_DATABASE_URL` is set. CI has no database yet; adding a Postgres service plus `pipeline` load to CI is a later option.
+
+### B19. Bottle images are hotlinked from Fragrantica, with a drawn fallback (2026-10-15)
+- **Decision:** For the portfolio demo, each fragrance's `image_url` (Fragrantica's image server, `fimgs.net`) loads directly in the browser. If an image fails to load, the page draws a placeholder bottle tinted by the fragrance's dominant family, in the same fixed-size frame, so nothing moves.
+- **Why:** The dataset already carries an image URL for all 300 fragrances, and a catalogue without bottles looks unfinished. The fallback covers the day Fragrantica blocks hotlinking (images are requested with `referrerPolicy="no-referrer"`, which avoids the most common referrer check).
+- **Risk:** Same as the dataset (decision 15): the images are Fragrantica's. **Replace or license them before charging anyone.**
+- **Look:** The photos are bottles on white. On the dark design they sit on a muted paper tone (`--color-paper`) with `mix-blend-mode: multiply` and the export's sepia filter, shown whole (`object-contain`) rather than cropped.
+
+### B20. M4 frontend choices the spec left open (2026-10-15)
+- **Pairing state lives in the URL** (`/?mode=notes&notes=Rose,Vanilla&goal=enhance`, `/?f=<slug>&goal=soften`). Every result is a shareable link, and "Pair this" on a fragrance page is just a link. With no params the page opens on Club de Nuit Intense Man, Soften (the project's origin story, decision 3); Notes mode defaults to Bergamot and Vanilla. The Figma default of Bergamot and Oud was dropped because Oud is not a mapped note.
+- **Nav shows only pages that exist** (Pair, Browse, About). Chat, Concierge, Collection, and Sign in join the header when their milestones land, rather than linking to empty pages now.
+- **Want/Own buttons are deferred to M5.** They need guest storage to mean anything. `web/src/lib/collection.ts` returns an empty Own list until then, so "Owned" badges never show.
+- **The "Owned only" switch is hidden until M5 adds Own buttons** (Tejas's call at M4 review). A switch that can only ever show "you own nothing" reads as broken. The filter code stays; `OWN_BUTTONS_READY` in `collection.ts` turns the switch back on.
+- **"Owned only" filters the partners loaded so far**, not the whole list, because the pairing API has no owned-only filter. M5 should revisit when it turns the switch on (an `ownedOnly` query param, or ranking the Own list through the rank endpoint).
+- **The pairing and catalogue APIs return no numeric `id`**, but SPEC section 7's `owned` parameter takes ids. M5 needs ids in `/api/fragrances` and the pairing items, or `owned` switched to slugs.
+- **Results load 24 at a time with "Show more"** (fragrances: the API's pages; notes: the full list sliced in the browser). Skeleton rows use the same grid and frame sizes as real rows, and a goal or base change keeps the old list on screen (dimmed) until the new one arrives, so loading moves nothing.
+- **Placeholder copy replaced with real data or accurate text.** The hero intro now describes what the app does; the "Pairing Journal 01" box shows the live catalogue count; the rank finder's idle state shows "Your bottle #— of N" with the real list size.
+- **Breakpoints match the export:** Tailwind's `sm` starts at 641px and `md` at 901px, the export's two `max-width` switches.
+- **Family tints** (14 colours for placeholders, the wheel chart, and family dots) are new tokens, since the export has none. They sit in an `@theme static` block because code reads them by name and Tailwind would otherwise drop them.
+- **The About page shows no affinity numbers.** The tables live in `scoring.yaml` and no endpoint exposes them; copying them into the page would let the two drift. The page explains the rules in words and shows one live rank (Club de Nuit Intense Man in Aventus's Enhance list) from the API.
+- **New web dependencies:** `react-router` (v8, data router for scroll restoration), `@tanstack/react-query`, and `@testing-library/user-event` (dev).
