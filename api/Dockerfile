@@ -14,7 +14,9 @@ COPY pipeline/config/scoring.yaml /pipeline/config/scoring.yaml
 EXPOSE 3000
 CMD ["npm", "run", "dev"]
 
-# Runtime image (used by CI and, from M6, production).
+# Runtime image (CI and production). Production mounts nothing, so the migrations
+# ride along in the image at the path `npm run migrate` expects (../db/migrations).
 FROM dev AS prod
 ENV NODE_ENV=production
+COPY db/migrations /db/migrations
 CMD ["npm", "start"]

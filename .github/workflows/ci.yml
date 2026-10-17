@@ -1,7 +1,11 @@
 name: CI
 on:
+  # main is covered by deploy.yml, which calls this workflow before it deploys,
+  # so a push to main runs the suite once instead of twice.
   push:
+    branches-ignore: [main]
   pull_request:
+  workflow_call:
 
 jobs:
   api:
@@ -52,5 +56,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -f api/Dockerfile --target prod -t scense-api .
-      - run: docker build --target build -t scense-web web
+      # The same build the deploy runs, so a broken image fails here, not on main.
+      # Placeholder names: nothing is pushed.
+      - run: docker compose -f docker-compose.prod.yml build caddy api backup
+        env:
+          IMAGE_PREFIX: scense-ci
+          IMAGE_TAG: ci
