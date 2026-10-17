@@ -1,1 +1,106 @@
-# Production stack (caddy, api, db, backup) arrives in M6.
+# Production stack on EC2: caddy, api, db, backup.
+#
+# Every value comes from /opt/scense/.env, which the deploy job writes from the
+# GitHub secrets on each deploy and refuses to write if any secret is empty.
+# Only the image names use `${VAR:?}` (stop with an error if unset): CI builds the
+# images from this file with no secrets at all, so the secrets can't require it.
+#
+# The `build` sections are used by GitHub Actions (and CI) to build the images; the
+# server only pulls them. All three build from the repo root, so the API image
+# carries its own scoring.yaml and migrations and nothing is mounted into it.
+name: scense
+
+# Docker keeps container logs forever by default, which would slowly fill the
+# 20 GB disk. Cap each container at 3 files of 10 MB.
+x-logging: &logging
+  driver: local
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  caddy:
+    image: ${IMAGE_PREFIX:?}-caddy:${IMAGE_TAG:?}
+    build:
+      context: .
+      dockerfile: caddy/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    volumes:
+      # Certificates live here. Losing them means asking Let's Encrypt again,
+      # which has weekly limits, so they get a named volume.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+    logging: *logging
+
+  api:
+    image: ${IMAGE_PREFIX:?}-api:${IMAGE_TAG:?}
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+      target: prod
+    restart: unless-stopped
+    # Each service lists only the secrets it uses, so caddy never sees the
+    # Anthropic key and the API never sees the bucket name.
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      JWT_SECRET: ${JWT_SECRET}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      GUEST_DAILY_CONVERSATION_CAP: ${GUEST_DAILY_CONVERSATION_CAP}
+      PORT: "3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *logging
+
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scense
+      POSTGRES_DB: scense
+      # Read only when the volume is first created; see DECISIONS.md B22.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # No `ports:`: the database is reachable only from containers on this network.
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scense -d scense"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+
+  backup:
+    image: ${IMAGE_PREFIX:?}-backup:${IMAGE_TAG:?}
+    build:
+      context: backup
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGUSER: scense
+      PGDATABASE: scense
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      AWS_BACKUP_BUCKET: ${AWS_BACKUP_BUCKET}
+      AWS_DEFAULT_REGION: ca-central-1
+      TZ: America/Toronto
+      # 3 a.m. Toronto time, when the site is quietest.
+      BACKUP_SCHEDULE: "0 3 * * *"
+      # No AWS keys: the AWS CLI gets short-lived credentials from the EC2
+      # instance role (scense-ec2-backup) through the metadata service.
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:

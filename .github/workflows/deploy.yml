@@ -1,8 +1,139 @@
-# Placeholder until M6. Manual trigger only, so it never runs by accident.
 name: Deploy
-on: workflow_dispatch
+
+# Every push to main deploys, but only after the full CI suite passes on that commit.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Two quick pushes must not deploy at the same time; the second waits its turn.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
-  deploy:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: ci
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push images to GitHub Container Registry
     steps:
-      - run: echo "Deploy not built yet (M6)"
+      - uses: actions/checkout@v4
+      - name: Set image names
+        # Registry names must be lowercase; the commit SHA tags every image, so a
+        # deploy always runs exactly the code that passed CI.
+        run: |
+          echo "IMAGE_PREFIX=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/scense" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${GITHUB_SHA}" >> "$GITHUB_ENV"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # The compose file's build sections use the repo root as context (SPEC M6).
+      - run: docker compose -f docker-compose.prod.yml build caddy api backup
+      - run: docker compose -f docker-compose.prod.yml push caddy api backup
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://scense.name
+    permissions:
+      contents: read
+      packages: read # the server pulls with this job's short-lived token
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy the compose file to the server
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: docker-compose.prod.yml
+          target: /opt/scense
+
+      - name: Write .env, pull images, migrate, restart
+        uses: appleboy/ssh-action@v1.2.5
+        env:
+          IMAGE_OWNER: ${{ github.repository_owner }}
+          IMAGE_TAG: ${{ github.sha }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CORS_ORIGIN: ${{ secrets.CORS_ORIGIN }}
+          GUEST_DAILY_CONVERSATION_CAP: ${{ secrets.GUEST_DAILY_CONVERSATION_CAP }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          AWS_BACKUP_BUCKET: ${{ secrets.AWS_BACKUP_BUCKET }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: IMAGE_OWNER,IMAGE_TAG,GHCR_USER,GHCR_TOKEN,POSTGRES_PASSWORD,DATABASE_URL,JWT_SECRET,ANTHROPIC_API_KEY,CORS_ORIGIN,GUEST_DAILY_CONVERSATION_CAP,ADMIN_TOKEN,AWS_BACKUP_BUCKET
+          command_timeout: 10m
+          script: |
+            set -eu
+            cd /opt/scense
+
+            # An empty value usually means a GitHub secret is missing or misspelled.
+            # Stop here, before anything on the server changes.
+            required="POSTGRES_PASSWORD DATABASE_URL JWT_SECRET ANTHROPIC_API_KEY CORS_ORIGIN"
+            required="$required GUEST_DAILY_CONVERSATION_CAP ADMIN_TOKEN AWS_BACKUP_BUCKET"
+            for name in $required; do
+              eval "value=\${$name:-}"
+              if [ -z "$value" ]; then echo "GitHub secret $name is empty or missing."; exit 1; fi
+            done
+
+            # GitHub secrets are the only copy of each value; the server's .env is
+            # rewritten from them every deploy, readable by the ubuntu user only.
+            umask 077
+            {
+              echo "IMAGE_PREFIX=ghcr.io/$(echo "$IMAGE_OWNER" | tr '[:upper:]' '[:lower:]')/scense"
+              echo "IMAGE_TAG=$IMAGE_TAG"
+              echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD"
+              echo "DATABASE_URL=$DATABASE_URL"
+              echo "JWT_SECRET=$JWT_SECRET"
+              echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY"
+              echo "CORS_ORIGIN=$CORS_ORIGIN"
+              echo "GUEST_DAILY_CONVERSATION_CAP=$GUEST_DAILY_CONVERSATION_CAP"
+              echo "ADMIN_TOKEN=$ADMIN_TOKEN"
+              echo "AWS_BACKUP_BUCKET=$AWS_BACKUP_BUCKET"
+            } > .env
+
+            # The images are private, so log in with this job's token (it expires
+            # when the job ends) and log out again after pulling.
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            docker compose -f docker-compose.prod.yml pull
+            docker logout ghcr.io
+
+            # Migrate before the new API starts, so new code never meets an old schema.
+            docker compose -f docker-compose.prod.yml up -d --wait db
+            docker compose -f docker-compose.prod.yml run --rm --no-deps api npm run migrate
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            # Old images pile up with one set per deploy; keep the disk clean.
+            docker image prune -af --filter "until=72h"
+
+      - name: Check https://scense.name/api/health
+        # 12 tries, 5 seconds apart: fail the deploy if the site isn't healthy within 60 s.
+        run: |
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 https://scense.name/api/health || true)
+            echo "try $i: HTTP $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 5
+          done
+          echo "Health check did not return 200 within 60 seconds."
+          exit 1
