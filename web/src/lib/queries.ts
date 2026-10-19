@@ -43,7 +43,7 @@ export function useFamilies() {
 // The catalogue size, read from the first page of the unfiltered list.
 export function useCatalogueTotal() {
   return useQuery({
-    queryKey: ["fragrances", { q: "", gender: "", family: "", page: 1 }],
+    queryKey: ["fragrances", { q: "", gender: "", family: "", sort: "", page: 1 }],
     queryFn: () => api.fragrances({ page: 1 }),
     select: (list) => list.total,
   });

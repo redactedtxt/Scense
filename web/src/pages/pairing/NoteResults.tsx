@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Notice, OutlineButton } from "../../components/ui";
 import { api, ApiError, type Goal } from "../../lib/api";
 import { formatCount, joinWords } from "../../lib/labels";
+import { EmptyPrompt } from "./EmptyPrompt";
 import { ResultsHead } from "./ResultsHead";
 import { NoteMatchRow, NoteMatchSkeleton } from "./rows";
 
@@ -21,14 +22,7 @@ export function NoteResults({ notes, goal }: { notes: string[]; goal: Goal }) {
     placeholderData: keepPreviousData,
   });
 
-  if (notes.length === 0) {
-    return (
-      <>
-        <ResultsHead goal={goal} summary="Pick at least one note to see what layers with it." />
-        <div className="border-t border-line-strong" />
-      </>
-    );
-  }
+  if (notes.length === 0) return <EmptyPrompt mode="notes" goal={goal} />;
 
   const data = pairing.data;
   const summary = data

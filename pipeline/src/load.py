@@ -29,6 +29,9 @@ def load_all(fragrances: pd.DataFrame, notes: pd.DataFrame, pairs: pd.DataFrame,
             _replace_fragrance_notes(cur, fragrances, fragrance_ids, note_ids)
             _replace_accords(cur, fragrances, fragrance_ids)
             _replace_pairs(cur, pairs, fragrance_ids)
+            _replace_aliases(cur, cfg)
+            _rebuild_search_vectors(cur)
+            _report_unused_aliases(cur)
         # leaving the `with conn` block commits; an exception rolls back
 
 
@@ -77,16 +80,15 @@ def _upsert_fragrances(cur, fragrances: pd.DataFrame, cfg: Config) -> list[int]:
         cur.execute(
             """INSERT INTO fragrances (slug, name, brand, gender, release_year, image_url,
                  community_rating, rating_votes, profile, facets, harshness, strength,
-                 seasons, daynight, search_vector)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                 to_tsvector('simple', %s || ' ' || %s))
+                 seasons, daynight)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, brand = EXCLUDED.brand,
                  gender = EXCLUDED.gender, release_year = EXCLUDED.release_year,
                  image_url = EXCLUDED.image_url, community_rating = EXCLUDED.community_rating,
                  rating_votes = EXCLUDED.rating_votes, profile = EXCLUDED.profile,
                  facets = EXCLUDED.facets, harshness = EXCLUDED.harshness,
                  strength = EXCLUDED.strength, seasons = EXCLUDED.seasons,
-                 daynight = EXCLUDED.daynight, search_vector = EXCLUDED.search_vector
+                 daynight = EXCLUDED.daynight
                RETURNING id""",
             (
                 row.slug, row.name, row.brand, row.gender, year, row.image_url,
@@ -94,7 +96,6 @@ def _upsert_fragrances(cur, fragrances: pd.DataFrame, cfg: Config) -> list[int]:
                 [float(x) for x in row.profile], _facet_json(facet_names, row.facets),
                 float(row.harshness), int(row.strength),
                 json.dumps(row.seasons), json.dumps(row.daynight),
-                row.name, row.brand,
             ),
         )  # fmt: skip
         ids.append(cur.fetchone()[0])
@@ -146,3 +147,47 @@ def _replace_pairs(cur, pairs: pd.DataFrame, fragrance_ids: list[int]) -> None:
         "COPY pair_scores (base_id, partner_id, goal, score, rank) FROM STDIN WITH (FORMAT csv)"
     ) as copy:
         copy.write(buffer.read())
+
+
+def _replace_aliases(cur, cfg: Config) -> None:
+    """Search aliases live in the database so the search vector is built from them in SQL."""
+    cur.execute("DELETE FROM brand_aliases")
+    cur.execute("DELETE FROM name_aliases")
+    cur.executemany("INSERT INTO brand_aliases (alias, brand) VALUES (%s, %s)", cfg.brand_aliases)
+    cur.executemany("INSERT INTO name_aliases (alias, name_word) VALUES (%s, %s)", cfg.name_aliases)
+
+
+def _rebuild_search_vectors(cur) -> None:
+    """name + brand + every alias that applies, as one 'simple' tsvector.
+
+    A brand alias applies to every fragrance of that brand. A name alias applies to every
+    fragrance whose name contains its name_word as a phrase; the phrase test uses the same
+    text-search parser as the vector, so "J'adore" and "Eau de Parfum" are cut into words
+    identically on both sides. Everything is unaccented first, and the API unaccents the
+    typed text too, so "tresor" finds Trésor and "Giò" is "gio" on both sides. The API's
+    query uses 'simple' too (routes/fragrances.ts).
+    """
+    cur.execute(
+        """UPDATE fragrances f SET search_vector = to_tsvector('simple', unaccent(
+             f.name || ' ' || f.brand
+             || ' ' || coalesce((SELECT string_agg(a.alias, ' ') FROM brand_aliases a
+                                  WHERE lower(a.brand) = lower(f.brand)), '')
+             || ' ' || coalesce((SELECT string_agg(n.alias, ' ') FROM name_aliases n
+                                  WHERE to_tsvector('simple', unaccent(f.name))
+                                    @@ phraseto_tsquery('simple', unaccent(n.name_word))), '')))"""
+    )
+
+
+def _report_unused_aliases(cur) -> None:
+    """An alias that matches nothing is not an error (the catalogue changes), but say so."""
+    cur.execute(
+        """SELECT 'brand', alias, brand FROM brand_aliases a
+            WHERE NOT EXISTS (SELECT 1 FROM fragrances f WHERE lower(f.brand) = lower(a.brand))
+           UNION ALL
+           SELECT 'name', alias, name_word FROM name_aliases n
+            WHERE NOT EXISTS (SELECT 1 FROM fragrances f
+                               WHERE to_tsvector('simple', unaccent(f.name))
+                                     @@ phraseto_tsquery('simple', unaccent(n.name_word)))"""
+    )
+    for kind, alias, target in cur.fetchall():
+        print(f"note: {kind} alias '{alias}' -> '{target}' matches no fragrance in this catalogue")

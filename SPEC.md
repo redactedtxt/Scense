@@ -54,16 +54,18 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 ├── .github/workflows/
 │   ├── ci.yml
 │   └── deploy.yml
-├── db/migrations/                # 001_init.sql, 002_accounts.sql, ...
+├── db/migrations/                # 001_init.sql, 002_search_aliases.sql, 003_accounts.sql, ...
 ├── pipeline/
 │   ├── raw/                      # Kaggle files, gitignored
 │   ├── config/
-│   │   ├── scoring.yaml          # every tunable number lives here (incl. strength_cutoffs)
+│   │   ├── scoring.yaml          # every tunable number lives here (incl. strength_cutoffs, search and browse settings)
 │   │   ├── families.yaml         # 14 wheel families, ring positions, harshness
 │   │   ├── facets.yaml           # facets and harshness nudges
 │   │   ├── accord_map.csv        # dataset accord -> family weights + facets
 │   │   ├── note_map.csv          # canonical note -> family weights + facets
 │   │   ├── note_aliases.csv      # dataset note spelling/origin variant -> canonical note
+│   │   ├── brand_aliases.csv     # search: abbreviation -> brand (YSL -> Yves Saint Laurent)
+│   │   ├── name_aliases.csv      # search: misspelling -> word in a fragrance name (myself -> MYSLF)
 │   │   └── occasions.yaml        # concierge occasion -> family preferences
 │   ├── src/
 │   │   ├── inspect_dataset.py
@@ -131,6 +133,9 @@ The wheel lacks gourmand, spicy, and an intensity axis. Facets patch that. Store
 - `accord_map.csv` columns: `accord, family_weights, facets, check`. Example row: `warm spicy, "Woody Amber:0.6;Soft Amber:0.4", "spicy"`. Weights in a row sum to 1. Cover every accord that appears in the filtered catalogue.
 - `note_map.csv` columns: `note, family_weights, facets, check`. Cover the 150 most frequent **canonical** notes in the filtered catalogue (frequency = number of catalogue fragrances containing the note, after aliases are applied; ties at the cutoff go to the note with the larger summed weight).
 - `note_aliases.csv` columns: `alias, canonical`. Maps spelling and origin variants to one canonical note ("Vanille", "Madagascar Vanilla", "Bourbon Vanilla" → "Vanilla"; "Virginia Cedar" → "Cedar"). Ingest applies it to every note name before anything else, and a fragrance that lists two variants of one note counts that note once (keep the highest weight). Notes outside `note_map.csv` after aliasing are ignored for note pairing and autocomplete but still shown on the fragrance page. They are stored in `notes` with `mapped = false` and no profile.
+- `brand_aliases.csv` columns: `alias, brand, check`. Search abbreviations and common alternative spellings of a brand (`YSL` → `Yves Saint Laurent`, `JPG` → `Jean Paul Gaultier`, `D&G` → `Dolce&Gabbana`). `brand` is the brand exactly as the dataset spells it. An alias applies to every fragrance of that brand. A row whose brand is not in the catalogue is allowed (it is kept for when the catalogue grows); `load.py` prints a note for it.
+- `name_aliases.csv` columns: `alias, name_word, check`. Spellings people type for a fragrance name (`myself` → `MYSLF`). `name_word` is a word or phrase inside the dataset name, matched as whole words in order, anywhere in the name (`MYSLF` matches "MYSLF Eau de Parfum"; `Eau de Parfum` matches every name that contains those three words). An alias applies to every fragrance whose name matches. One alias may have several rows.
+- Both files are draft-then-review like the mapping files: the `check` column holds `# CHECK` for rows Tejas should confirm, and the loaders ignore it. Both are loaded into the `brand_aliases` and `name_aliases` tables and folded into `search_vector` (section 5).
 - The `check` column holds `# CHECK` remarks for the human reviewer. **Pipeline code must ignore it** when loading (read only the named columns).
 
 Draft both files from perfumery knowledge, then **stop and ask Tejas to review them** before moving on. Mark any row you feel unsure about with a `# CHECK` comment column.
@@ -196,6 +201,8 @@ Write these as pytest cases:
 - Soften never returns a partner with equal or higher harshness.
 - Every row in `accord_map.csv` and `note_map.csv` has weights that sum to 1 and only known family and facet names.
 - Every accord in the catalogue is in `accord_map.csv`, and every `note_aliases.csv` canonical name exists in `note_map.csv` or is a deliberate unmapped note.
+- Every `brand_aliases.csv` brand is a catalogue brand (except the deliberate absentees, today only Comme des Garçons), and every `name_aliases.csv` `name_word` appears in some catalogue name.
+- The alias files hold YSL, JPG, D&G, CDG, MFK, PDM, TF and `myself` → MYSLF, ignore the `check` column, and reject duplicate or empty rows.
 - Slug builder: `Davidoff` / `Cool Water` / 1988 gives `davidoff-cool-water-1988`; a missing year is left out; accents are stripped; a collision appends the dataset id.
 
 ---
@@ -211,7 +218,7 @@ Tejas downloads the Decant Kaggle dataset ("Fragrantica Perfumes: Ratings, Notes
 3. `profiles.py`: build `p`, facets, harshness, strength, season and day/night shares.
 4. `scoring.py`: ring distance, matrix build, pair scoring, goal rules. Pure functions, fully unit tested.
 5. `precompute.py`: all fragrance pairs for both goals, ranks included.
-6. `load.py`: upsert everything into Postgres in one transaction. Re-runnable.
+6. `load.py`: upsert everything into Postgres in one transaction, including the search-alias tables and every fragrance's `search_vector`. Re-runnable.
 
 Command: `make pipeline` runs steps 2 to 6. `make tune` reruns 3 to 6 after a `scoring.yaml` change and prints the CDNIM Soften top 10 and the Creed Aventus Enhance top 10.
 
@@ -244,7 +251,7 @@ CREATE TABLE fragrances (
   strength SMALLINT NOT NULL CHECK (strength BETWEEN 1 AND 4),
   seasons JSONB NOT NULL,             -- {"winter":0.4,"spring":..,"summer":..,"autumn":..}; UI shows "Fall"
   daynight JSONB NOT NULL,            -- {"day":0.3,"night":0.7}
-  search_vector TSVECTOR
+  search_vector TSVECTOR              -- 'simple' vector of name, brand, and their aliases (see 002)
 );
 CREATE INDEX fragrances_search_idx ON fragrances USING GIN (search_vector);
 
@@ -295,7 +302,28 @@ CREATE TABLE llm_usage (
 );
 ```
 
-Migration `002_accounts.sql` (pass 2):
+Migration `002_search_aliases.sql` (search fix, after M6):
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_trgm;   -- typo-tolerant fallback
+CREATE EXTENSION IF NOT EXISTS unaccent;  -- accent-free spellings match (tresor finds Trésor)
+
+CREATE TABLE brand_aliases (
+  alias TEXT NOT NULL,                -- what people type: YSL
+  brand TEXT NOT NULL,                -- the brand as the dataset spells it
+  PRIMARY KEY (alias, brand)
+);
+
+CREATE TABLE name_aliases (
+  alias TEXT NOT NULL,                -- what people type: myself
+  name_word TEXT NOT NULL,            -- a word or phrase inside a fragrance name: MYSLF
+  PRIMARY KEY (alias, name_word)
+);
+```
+
+`load.py` fills both tables from the CSVs, then rebuilds every `search_vector` in SQL as `to_tsvector('simple', unaccent(name || ' ' || brand || ' ' || brand aliases || ' ' || name aliases))`, in the same transaction as the rest of the load. The name-alias test uses `phraseto_tsquery('simple', name_word)`, so the alias match and the vector use one parser. This migration took number 002, so the pass 2 accounts migration below is `003_accounts.sql`.
+
+Migration `003_accounts.sql` (pass 2):
 
 ```sql
 CREATE TABLE users (
@@ -365,13 +393,15 @@ All responses JSON. Validate every body and query with Zod. Errors return `{ err
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/health` | DB ping, for the deploy check |
-| GET | `/api/fragrances?q=&gender=&family=&page=` | Full-text search on name and brand, 24 per page. `gender` is `male`, `female`, or `unisex` |
+| GET | `/api/fragrances?q=&gender=&family=&sort=&page=` | Search and list, 24 per page. `gender` is `male`, `female`, or `unisex`. `q` is a prefix full-text search over name, brand, and their aliases, accent-insensitive (`ysl myself` finds YSL MYSLF, `tresor` finds Trésor). If `q` matches nothing at all (not merely nothing after the gender and family filters), a typo-tolerant fallback returns near-misses: a bottle matches when every typed word is within `search.fuzzy_min_similarity` (pg_trgm) of one of its words, ordered by closeness, and the response says `fuzzy: true`. `sort` is `popular` (default: rating votes, high to low), `least-popular` (rating votes, low to high), or `highest-rated` (weighted rating, below); an unknown value is a 400. The sort orders exact results; fuzzy results are ordered by closeness |
 | GET | `/api/fragrances/:slug` | Full detail: notes by layer, accords, family profile, strength, tags, rating |
 | GET | `/api/notes?q=` | Autocomplete. Mapped notes only (`mapped = true`) |
 | POST | `/api/pairing/notes` | Body `{ notes: string[], goal }`. Mapped notes only; rejects an unmapped input note. Returns ranked notes with score 0-100 and the dominant family of each |
 | GET | `/api/pairing/fragrances/:slug?goal=&page=&owned=&ownedOnly=` | Ranked partners from `pair_scores`. `owned` = comma list of IDs to flag. `ownedOnly=true` returns only those partners, searched across the whole list, with their full-list ranks; `total` stays the whole list size and `matching` counts what the filter returns |
 | GET | `/api/pairing/fragrances/:slug/rank/:partnerSlug?goal=` | Returns `{ status: "ranked", rank, total, score }` for the "#38 of 299" search. `total` is the real size of that base's list for the goal, so Soften shows e.g. "#12 of 214". If the partner is not in the list (Soften only: it is as harsh or harsher than the base), return `{ status: "too_harsh", total }` and the UI says "too harsh to soften this base". Never a missing rank or a 404 for a valid slug |
 | GET | `/api/families` | The 14 families for the About page and profile card |
+
+**Weighted rating (the "Highest rated" sort).** `(votes × rating + m × mean) / (votes + m)`. `mean` is the average community rating of the whole catalogue (not of the filtered list, so a bottle's score does not change with the filters) and `m` is `browse.rating_weight_votes` in `scoring.yaml` (10,000, about the catalogue's median vote count). A bottle needs roughly `m` votes before its own rating counts as much as the average, so a bottle with few votes and a perfect score cannot top the list. Ties break by votes, then id. A bottle with no rating sorts last.
 
 ### Pass 2
 
@@ -452,8 +482,8 @@ Pages:
 
 | Route | Content |
 |---|---|
-| `/` | Pairing. Tabs: Notes or Fragrance. Goal toggle: Enhance or Soften. Results list with score bars, "Owned" badges, an "Owned only" filter, and a search box that jumps to any fragrance's rank |
-| `/browse` | Catalogue grid with search and filters |
+| `/` | Pairing. Tabs: Notes or Fragrance. Goal toggle: Enhance or Soften. Results list with score bars, "Owned" badges, an "Owned only" filter, and a search box that jumps to any fragrance's rank. The page opens with nothing selected: an empty search box and a short prompt in the results area. A shared `?f=<slug>` link still preloads that fragrance |
+| `/browse` | Catalogue grid with search, gender and family filters, and a sort control (Most popular, the default; Least popular; Highest rated). Search, filters, sort, and page live in the URL; the default sort stays out of it |
 | `/f/:slug` | Fragrance page: pyramid, accords as bars, family profile as a small wheel chart, strength, tags, rating, Want/Own buttons, reviews (pass 2), "Pair this" button |
 | `/chat` | Chatbot with the taste profile card beside it |
 | `/concierge` | Concierge chat with question chips |
@@ -477,6 +507,7 @@ Header: Scense wordmark, nav, "Sign in" in the top right. Footer on every page: 
 - Pages without a design (browse, fragrance page, chat, concierge, collection, about) reuse the same tokens and components.
 - Treat the export's data as placeholders: the hardcoded matches, Unsplash images, and example copy. Real data comes from the API and `image_url`.
 - Keep the existing rules: works at 375px, keyboard accessible, no layout shift on results load.
+- Every fragrance search dropdown (the pairing base picker and the rank finder) shows a small bottle thumbnail beside each name, drawn by the same component as the result cards, so a missing photo gets the same drawn bottle. The thumbnail's frame has a fixed size, so the list does not jump as photos load. Note dropdowns have no thumbnails (notes have no bottle), and Browse has no dropdown: its search filters the grid.
 
 ---
 
@@ -550,6 +581,7 @@ Stop after each one. Report: what you built, files to read first, commands to ru
 | M4 | Pairing UI, browse, fragrance pages, about page | Full pass 1 flow works in the browser |
 | M5 | Guest mode | Own/Want persist across reloads; storage failure banner works |
 | M6 | Production deploy | Live HTTPS site; deploy on push to `main`; nightly backup runs. The API image carries its own copy of `pipeline/config/scoring.yaml` (built from the repo root: `docker build -f api/Dockerfile .`), so `docker-compose.prod.yml` and `deploy.yml` must build the API with the repo root as context and mount nothing |
+| M6.1 | Usability fixes from watching real users | Pairing opens empty with a prompt; search understands brand abbreviations, name misspellings, and typos; fragrance dropdowns show bottle thumbnails; Browse has a sort control. Alias, typo-fallback, and sort tests pass |
 
 ### Pass 2
 | # | Milestone | Done when |

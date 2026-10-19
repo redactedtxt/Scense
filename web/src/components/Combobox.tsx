@@ -1,4 +1,5 @@
 import { useId, useState, type KeyboardEvent, type ReactNode, type Ref } from "react";
+import { BottleImage } from "./BottleImage";
 import { SearchIcon } from "./Icons";
 
 type Props<T> = {
@@ -128,12 +129,24 @@ export function Combobox<T>({ inputRef, ...props }: Props<T>) {
   );
 }
 
-// One suggestion row: name in the display face, a small grey line under it.
-export function SuggestionRow({ title, detail }: { title: string; detail: string }) {
+type SuggestionImage = { src: string | null; family: string };
+
+// One suggestion row: name in the display face, a small grey line under it. With an
+// `image`, a bottle thumbnail sits on the left, drawn by the same BottleImage as the
+// result cards (so a missing photo gets the same drawn bottle). The thumbnail's frame
+// has a fixed size, so the list keeps its height while photos load (DECISIONS B26).
+export function SuggestionRow({ title, detail, image }: { title: string; detail: string; image?: SuggestionImage }) {
+  const text = (
+    <span className="block min-w-0">
+      <span className="block truncate font-display text-[17px] text-text">{title}</span>
+      <span className="block truncate text-[10px] tracking-[0.04em] text-dim">{detail}</span>
+    </span>
+  );
+  if (!image) return text;
   return (
-    <span className="block">
-      <span className="block font-display text-[17px] text-text">{title}</span>
-      <span className="block text-[10px] tracking-[0.04em] text-dim">{detail}</span>
+    <span className="flex items-center gap-3">
+      <BottleImage src={image.src} family={image.family} lazy className="h-10 w-[30px] shrink-0" />
+      {text}
     </span>
   );
 }

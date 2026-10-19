@@ -4,7 +4,7 @@ import { Link, useSearchParams } from "react-router";
 import { BottleImage } from "../components/BottleImage";
 import { SearchIcon } from "../components/Icons";
 import { Notice, OutlineButton, Segmented, Tag } from "../components/ui";
-import { api, type FragranceSummary } from "../lib/api";
+import { api, type FragranceSummary, type Sort } from "../lib/api";
 import { formatCount } from "../lib/labels";
 import { useFamilies } from "../lib/queries";
 import { useDebounced } from "../lib/useDebounced";
@@ -15,27 +15,35 @@ const GENDER_OPTIONS = [
   { value: "female", label: "Women" },
   { value: "unisex", label: "Unisex" },
 ];
+const SORT_OPTIONS: { value: Sort; label: string }[] = [
+  { value: "popular", label: "Most popular" },
+  { value: "least-popular", label: "Least popular" },
+  { value: "highest-rated", label: "Highest rated" },
+];
+const DEFAULT_SORT: Sort = "popular";
 const PAGE_SIZE = 24;
 // The first row of cards is on screen at load; the rest load their photos lazily.
 const EAGER_CARDS = 4;
 
-// "/browse": the catalogue grid. Search, filters, and page live in the URL, so the back
-// button and shared links restore the same view.
+// "/browse": the catalogue grid. Search, filters, sort, and page live in the URL, so the
+// back button and shared links restore the same view.
 export function BrowsePage() {
   const [params, setParams] = useSearchParams();
   const filters = {
     q: params.get("q") ?? "",
     gender: params.get("gender") ?? "",
     family: params.get("family") ?? "",
+    // An unknown ?sort= is ignored, like the default, which stays out of the URL.
+    sort: SORT_OPTIONS.find((o) => o.value === params.get("sort"))?.value ?? ("" as const),
     page: Math.max(1, Number(params.get("page")) || 1),
   };
 
-  // Changing any filter goes back to page 1.
-  function setFilter(key: "q" | "gender" | "family", value: string) {
+  // Changing any filter or the sort goes back to page 1.
+  function setFilter(key: FilterKey, value: string) {
     setParams(
       (current) => {
         const next = new URLSearchParams(current);
-        if (value) next.set(key, value);
+        if (value && !(key === "sort" && value === DEFAULT_SORT)) next.set(key, value);
         else next.delete(key);
         next.delete("page");
         return next;
@@ -73,7 +81,12 @@ export function BrowsePage() {
         </p>
       </section>
       <Filters filters={filters} onChange={setFilter} />
-      <ResultCount total={list.data?.total} filters={filters} />
+      <ResultCount
+        total={list.data?.total}
+        fuzzy={list.data?.fuzzy ?? false}
+        filters={filters}
+        onSortChange={(sort) => setFilter("sort", sort)}
+      />
       <div aria-busy={list.isFetching} className={`transition-opacity ${list.isPlaceholderData ? "opacity-50" : ""}`}>
         {list.isError && <Notice role="alert">Could not load the catalogue. Try again in a moment.</Notice>}
         {list.data?.total === 0 && <Notice>No fragrance matches. Try a shorter search or clear a filter.</Notice>}
@@ -102,9 +115,10 @@ export function BrowsePage() {
   );
 }
 
-type Filters = { q: string; gender: string; family: string; page: number };
+type Filters = { q: string; gender: string; family: string; sort: Sort | ""; page: number };
+type FilterKey = "q" | "gender" | "family" | "sort";
 
-function Filters({ filters, onChange }: { filters: Filters; onChange: (key: "q" | "gender" | "family", v: string) => void }) {
+function Filters({ filters, onChange }: { filters: Filters; onChange: (key: FilterKey, v: string) => void }) {
   const families = useFamilies();
   // The box updates instantly; the URL (and so the request) waits for a typing pause.
   const [text, setText] = useState(filters.q);
@@ -148,12 +162,40 @@ function Filters({ filters, onChange }: { filters: Filters; onChange: (key: "q" 
   );
 }
 
-function ResultCount({ total, filters }: { total: number | undefined; filters: Filters }) {
+// The count on the left, the sort control on the right. Close matches (the typo fallback)
+// say so, since they are ordered by closeness and the sort does not apply to them.
+function ResultCount(props: {
+  total: number | undefined;
+  fuzzy: boolean;
+  filters: Filters;
+  onSortChange: (sort: string) => void;
+}) {
+  const { total, fuzzy, filters } = props;
   const filtered = filters.q || filters.gender || filters.family;
+  const noun = total === 1 ? "fragrance" : "fragrances";
+  const text = fuzzy
+    ? `No exact match for “${filters.q}”. Showing ${formatCount(total ?? 0)} close ${total === 1 ? "match" : "matches"}.`
+    : `${formatCount(total ?? 0)} ${noun}${filtered ? " match" : ""}.`;
   return (
-    <p aria-live="polite" className="m-0 min-h-[1.6em] py-6 text-xs leading-[1.6] text-dim">
-      {total === undefined ? " " : `${formatCount(total)} ${total === 1 ? "fragrance" : "fragrances"}${filtered ? " match" : ""}.`}
-    </p>
+    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 py-6">
+      <p aria-live="polite" className="m-0 min-h-[1.6em] text-xs leading-[1.6] text-dim">
+        {total === undefined ? " " : text}
+      </p>
+      <label className="flex items-center gap-3">
+        <span className="kicker">Sort by</span>
+        <select
+          value={filters.sort || DEFAULT_SORT}
+          onChange={(event) => props.onSortChange(event.target.value)}
+          className="h-[38px] cursor-pointer border border-line-control bg-panel px-3 font-display text-[16px] text-text-input"
+        >
+          {SORT_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
   );
 }
 

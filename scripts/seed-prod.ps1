@@ -9,7 +9,8 @@
 #   ./scripts/seed-prod.ps1 -KeyPath "$HOME\.ssh\other.pem" -HostName 3.97.35.62
 #
 # It replaces the catalogue tables only (families, fragrances, notes, their links,
-# and pair_scores). llm_usage is left alone. See DECISIONS.md B22 before running it
+# pair_scores, and the two search-alias tables). llm_usage is left alone. The search
+# vectors travel inside the fragrances table. See DECISIONS.md B22 before running it
 # once pass 2 accounts exist: TRUNCATE ... CASCADE would also empty tables that
 # point at fragrances (collections, reviews, pair ratings).
 
@@ -22,7 +23,7 @@ param(
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
-$tables = "families", "fragrances", "notes", "fragrance_notes", "fragrance_accords", "pair_scores"
+$tables = "families", "fragrances", "notes", "fragrance_notes", "fragrance_accords", "pair_scores", "brand_aliases", "name_aliases"
 $dumpFile = Join-Path ([IO.Path]::GetTempPath()) "scense-catalogue.sql"
 $target = "$User@$HostName"
 

@@ -26,7 +26,12 @@ export type FragranceList = {
   pageSize: number;
   total: number;
   totalPages: number;
+  // True when the search text matched nothing exactly and these are close matches.
+  fuzzy: boolean;
 };
+
+// The Browse sort control's URL values. "popular" is the default and stays out of the URL.
+export type Sort = "popular" | "least-popular" | "highest-rated";
 
 export type NoteRef = { name: string; mapped: boolean };
 export type Layer = "top" | "heart" | "base" | "flat";
@@ -120,7 +125,7 @@ function query(params: Record<string, string | number | undefined>): string {
 }
 
 export const api = {
-  fragrances: (params: { q?: string; gender?: string; family?: string; page?: number }) =>
+  fragrances: (params: { q?: string; gender?: string; family?: string; sort?: string; page?: number }) =>
     request<FragranceList>(`/fragrances${query(params)}`),
 
   fragrance: (slug: string) => request<FragranceDetail>(`/fragrances/${encodeURIComponent(slug)}`),

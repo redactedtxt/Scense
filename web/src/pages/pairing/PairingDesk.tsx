@@ -18,7 +18,8 @@ const GOALS: { value: Goal; label: string }[] = [
 type Props = {
   mode: Mode;
   goal: Goal;
-  base: { data: FragranceDetail | undefined; isError: boolean };
+  // `chosen` is false until a fragrance is in the URL; then nothing is selected yet.
+  base: { data: FragranceDetail | undefined; isError: boolean; chosen: boolean };
   notes: string[];
   onModeChange: (mode: Mode) => void;
   onGoalChange: (goal: Goal) => void;
@@ -82,7 +83,13 @@ function BasePicker({ base, onChange }: { base: Props["base"]; onChange: (slug: 
         items={typed ? (suggestions.data ?? []) : []}
         loading={suggestions.isFetching}
         itemKey={(f) => f.slug}
-        renderItem={(f) => <SuggestionRow title={f.name} detail={`${f.brand} · ${f.dominantFamily}`} />}
+        renderItem={(f) => (
+          <SuggestionRow
+            title={f.name}
+            detail={`${f.brand} · ${f.dominantFamily}`}
+            image={{ src: f.imageUrl, family: f.dominantFamily }}
+          />
+        )}
         onSelect={(f) => {
           onChange(f.slug);
           setTyped(null);
@@ -111,6 +118,7 @@ function BasePicker({ base, onChange }: { base: Props["base"]; onChange: (slug: 
 // .selection-meta. Fixed sizes on the picture and text lines, so loading moves nothing.
 function SelectedBase({ base }: { base: Props["base"] }) {
   const f = base.data;
+  if (!base.chosen) return null;
   if (base.isError) {
     return (
       <p role="alert" className="m-0 pt-[18px] font-display text-lg text-soft">
