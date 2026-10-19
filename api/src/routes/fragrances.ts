@@ -175,7 +175,7 @@ async function anyTextMatch(db: Db, tsquery: string): Promise<boolean> {
 
 // The typo fallback (DECISIONS B23). A bottle matches when EVERY typed word is close
 // (pg_trgm similarity) to some word in its search vector: name, brand, and aliases.
-// Results are ordered by total closeness, then votes. The catalogue is 300 rows, so
+// Results are ordered by total closeness, then votes. The catalogue is about 1,000 rows (about 12 ms for one typed word), so
 // comparing every word needs no index; revisit if it grows by orders of magnitude.
 const FUZZY_MATCHED = `WITH scored AS (
     SELECT f.id, min(w.best) AS worst, sum(w.best) AS closeness

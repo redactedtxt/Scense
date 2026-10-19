@@ -16,6 +16,10 @@ describe.skipIf(!url)("against the loaded catalogue", () => {
   const app = createApp(pool, matrices, settings);
   afterAll(() => pool.end());
 
+  // The catalogue size is read, not hardcoded, so growing it never breaks these tests.
+  const catalogueSize = async () => (await pool.query("SELECT count(*)::int AS n FROM fragrances")).rows[0].n as number;
+  const PAGE = 24;
+
   const slugOf = async (name: string) => {
     const res = await request(app).get("/api/fragrances").query({ q: name });
     return res.body.items[0].slug as string;
@@ -52,14 +56,18 @@ describe.skipIf(!url)("against the loaded catalogue", () => {
 
     it("finds MYSLF by the spelling people use, alone and with a brand alias", async () => {
       const alone = await search({ q: "myself" });
-      expect((alone.items as Item[]).map((i) => i.name)).toEqual(["MYSLF Eau de Parfum"]);
+      const names = (alone.items as Item[]).map((i) => i.name);
+      expect(names).toContain("MYSLF Eau de Parfum");
+      for (const name of names) expect(name).toContain("MYSLF");
       const both = await search({ q: "ysl myself" });
       expect(both.fuzzy).toBe(false);
-      expect((both.items as Item[]).map((i) => i.name)).toEqual(["MYSLF Eau de Parfum"]);
+      expect((both.items as Item[]).map((i) => i.name)).toEqual(names);
     });
 
     it("still finds bottles by their real names and keeps prefix matching", async () => {
-      expect((await search({ q: "myslf" })).total).toBe(1);
+      const real = await search({ q: "myslf" });
+      expect(real.total).toBeGreaterThan(0);
+      expect(real.total).toBe((await search({ q: "myself" })).total);
       expect((await search({ q: "yves saint" })).total).toBe((await search({ q: "ysl" })).total);
     });
 
@@ -199,10 +207,12 @@ describe.skipIf(!url)("against the loaded catalogue", () => {
 
   it("pages the whole catalogue 24 at a time and filters by gender and family", async () => {
     const all = await request(app).get("/api/fragrances");
-    expect(all.body).toMatchObject({ total: 300, pageSize: 24, totalPages: 13 });
-    expect(all.body.items).toHaveLength(24);
-    const last = await request(app).get("/api/fragrances?page=13");
-    expect(last.body.items).toHaveLength(300 - 12 * 24);
+    const size = await catalogueSize();
+    const pages = Math.ceil(size / PAGE);
+    expect(all.body).toMatchObject({ total: size, pageSize: PAGE, totalPages: pages });
+    expect(all.body.items).toHaveLength(PAGE);
+    const last = await request(app).get(`/api/fragrances?page=${pages}`);
+    expect(last.body.items).toHaveLength(size - (pages - 1) * PAGE);
 
     const women = await request(app).get("/api/fragrances?gender=female");
     for (const item of women.body.items) expect(item.gender).toBe("female");
@@ -244,10 +254,11 @@ describe.skipIf(!url)("against the loaded catalogue", () => {
     expect(bad.body.error.code).toBe("unmapped_note");
   });
 
-  it("lists Enhance partners: 299 of them, best first, owned flagged", async () => {
+  it("lists Enhance partners: every other fragrance, best first, owned flagged", async () => {
     const base = await slugOf("Aventus");
+    const others = (await catalogueSize()) - 1;
     const first = await request(app).get(`/api/pairing/fragrances/${base}?goal=enhance`);
-    expect(first.body).toMatchObject({ total: 299, page: 1, totalPages: 13 });
+    expect(first.body).toMatchObject({ total: others, page: 1, totalPages: Math.ceil(others / PAGE) });
     const ranks = first.body.items.map((i: { rank: number }) => i.rank);
     expect(ranks).toEqual(Array.from({ length: 24 }, (_, i) => i + 1));
 
@@ -262,14 +273,17 @@ describe.skipIf(!url)("against the loaded catalogue", () => {
     const base = await slugOf("Aventus");
     // Rank 1 and the last-ranked partner: the last one is never on the first page.
     const firstPage = await request(app).get(`/api/pairing/fragrances/${base}?goal=enhance`);
-    const lastPage = await request(app).get(`/api/pairing/fragrances/${base}?goal=enhance&page=13`);
+    const others = (await catalogueSize()) - 1;
+    const lastPage = await request(app).get(
+      `/api/pairing/fragrances/${base}?goal=enhance&page=${Math.ceil(others / PAGE)}`,
+    );
     const top = firstPage.body.items[0];
     const bottom = lastPage.body.items.at(-1);
     const res = await request(app).get(
       `/api/pairing/fragrances/${base}?goal=enhance&owned=${bottom.id},${top.id}&ownedOnly=true`,
     );
-    expect(res.body).toMatchObject({ total: 299, matching: 2, totalPages: 1 });
-    expect(res.body.items.map((i: { rank: number }) => i.rank)).toEqual([1, 299]);
+    expect(res.body).toMatchObject({ total: others, matching: 2, totalPages: 1 });
+    expect(res.body.items.map((i: { rank: number }) => i.rank)).toEqual([1, others]);
     expect(res.body.items.every((i: { owned: boolean }) => i.owned)).toBe(true);
   });
 
@@ -285,7 +299,7 @@ describe.skipIf(!url)("against the loaded catalogue", () => {
     const list = await request(app).get(`/api/pairing/fragrances/${base}?goal=soften`);
     const { total } = list.body;
     expect(total).toBeGreaterThan(0);
-    expect(total).toBeLessThan(299);
+    expect(total).toBeLessThan((await catalogueSize()) - 1);
 
     const partner = list.body.items[2];
     const ranked = await request(app).get(`/api/pairing/fragrances/${base}/rank/${partner.slug}?goal=soften`);
@@ -309,9 +323,10 @@ describe.skipIf(!url)("against the loaded catalogue", () => {
     const base = await slugOf("Aventus");
     const other = await slugOf("Cool Water");
     const res = await request(app).get(`/api/pairing/fragrances/${base}/rank/${other}?goal=enhance`);
-    expect(res.body).toMatchObject({ status: "ranked", total: 299 });
+    const others = (await catalogueSize()) - 1;
+    expect(res.body).toMatchObject({ status: "ranked", total: others });
     expect(res.body.rank).toBeGreaterThanOrEqual(1);
-    expect(res.body.rank).toBeLessThanOrEqual(299);
+    expect(res.body.rank).toBeLessThanOrEqual(others);
   });
 
   it("returns the 14 families", async () => {

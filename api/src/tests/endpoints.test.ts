@@ -304,6 +304,13 @@ describe("GET /api/pairing/fragrances/:slug", () => {
     expect(list.params[3]).toEqual([2, 9]); // only these partners can come back
   });
 
+  it("accepts an owned list as long as the 1,000-fragrance catalogue (it was capped at 300)", async () => {
+    const { app } = appWith(routes);
+    const everyId = Array.from({ length: 1000 }, (_, i) => i + 1).join(",");
+    const res = await request(app).get(`/api/pairing/fragrances/base?goal=enhance&owned=${everyId}&ownedOnly=true`);
+    expect(res.status).toBe(200);
+  });
+
   it.each([
     ["missing goal", "/api/pairing/fragrances/base"],
     ["bad goal", "/api/pairing/fragrances/base?goal=x"],

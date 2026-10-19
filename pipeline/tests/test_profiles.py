@@ -84,8 +84,12 @@ def test_catalogue_values_are_in_range(fragrances):
 
 
 def test_strength_split_matches_the_approved_cutoffs(fragrances):
-    # SPEC 3.4: the cutoffs give a 75 / 78 / 72 / 75 split of the top 300.
-    assert fragrances["strength"].value_counts().sort_index().tolist() == [75, 78, 72, 75]
+    # SPEC 3.4: the cutoffs were approved on the top 300, where they give 75 / 78 / 72 / 75.
+    # The first 300 rows are still those fragrances, so their split must not move.
+    original = fragrances.head(300)["strength"].value_counts().sort_index().tolist()
+    assert original == [75, 78, 72, 75]
+    # Less-voted bottles are rated as weaker, so the 1,000 skews low (DECISIONS B27).
+    assert fragrances["strength"].value_counts().sort_index().tolist() == [308, 279, 224, 189]
 
 
 def test_every_catalogue_note_is_stored_and_only_mapped_ones_have_profiles(catalogue, cfg):

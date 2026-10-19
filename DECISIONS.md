@@ -76,6 +76,7 @@ Every major decision on this project, why we made it, what we rejected, and when
 - **Courtesy:** The footer credits Fragrantica as the data source.
 
 ### 16. Starter catalogue of 150 to 300 fragrances, all genders
+- **Superseded by B27:** the catalogue is now the 1,000 most-voted fragrances.
 - **Why:** That size covers most popular searches and keeps a one-week build manageable. Women's scents give Soften more partners, since a rose or powdery floral can round off a harsh woody scent.
 
 ### 17. Strength from longevity and sillage votes only
@@ -100,7 +101,7 @@ Every major decision on this project, why we made it, what we rejected, and when
 - **Why:** The wheel has no gourmand family, no spicy family, and no intensity axis. The chatbot needs "you like spicy," and Soften needs a harshness value.
 
 ### 21. Precompute fragrance pairs, compute note pairs live
-- **Why:** About 179,000 precomputed rows make the "#38 of 299" lookup a single indexed query. 150 notes are cheap enough to score per request.
+- **Why:** About 179,000 precomputed rows make the "#38 of 299" lookup a single indexed query. 150 notes are cheap enough to score per request. (At 1,000 fragrances the table has 1,498,500 rows; B27.)
 
 ### 22. Every tunable number lives in a config file
 - **Why:** Tuning happens by spraying real combinations and adjusting numbers. Config files make that a one-line change and a rerun, with no code edits.
@@ -334,12 +335,12 @@ Real visitors typed "ysl myself" and "jpg" and got nothing. Two layers fix it: a
 - **Rejected:** compacting aliases to one token ("dg") and teaching the API to do the same (the API would need to know every alias); looking aliases up from the tables per request (an extra query on every keystroke, or a cache to invalidate); fuzzy matching on every search (it would bury exact results).
 - **Migration numbering:** this took `002` (it creates `pg_trgm` and `unaccent`), so pass 2's accounts migration becomes `003_accounts.sql` (SPEC sections 2 and 5 updated). `scripts/seed-prod.ps1` now ships the two alias tables with the catalogue, and the new migration reaches production through the normal deploy.
 - **Added at review:** `bdc` → Bleu de Chanel (3 bottles), `adg` → Acqua di Giò (3), `cdnim` → Club de Nuit Intense Man (1), `tv` → Tobacco Vanille (1), `lmw` → Le Male (3, not Ultra Male), and the brand alias Margiela → Maison Martin Margiela (4). All matched the catalogue spelling.
-- **CDG matches nothing today.** Comme des Garçons is not in the top 300. The row stays for when the catalogue grows; `load.py` prints a note for it, and a test lists it as a deliberate absentee.
+- **CDG matched nothing at 300; superseded by B27.** Comme des Garçons was not in the top 300. The row stays for when the catalogue grows; `load.py` prints a note for it, and a test lists it as a deliberate absentee.
 
 ### B24. Browse sort, and a weighted rating for "Highest rated" (2026-10-18)
 - **Decision:** Browse gets a Sort control: Most popular (rating votes, high to low, the default), Least popular, Highest rated. The URL carries `sort=least-popular` or `sort=highest-rated`; the default stays out of the URL like an empty filter, and an unknown value is ignored. Changing the sort goes back to page 1. The API validates `sort` (400 on an unknown value) and orders with a fixed list of ORDER BY strings.
 - **Weighted rating:** `(votes × rating + m × mean) / (votes + m)`. A bottle with few votes and a perfect score is pulled toward the mean, so it cannot top the list. `mean` is the average rating over the whole catalogue, not the filtered list, so a bottle's score does not move when a filter changes. A bottle with no rating sorts last.
-- **The constant:** `browse.rating_weight_votes: 10000` in `scoring.yaml`, read by the API only. About the catalogue's median (12,200 votes; range 8,200 to 36,900), so a bottle needs roughly 10,000 votes before its own rating counts as much as the average. Checked on the real data: raw rating puts The Most Wanted Parfum (4.60 stars, 11,664 votes) first; the weighted rating puts Le Male Le Parfum (4.59, 28,689 votes) first. 5,000 left the raw order nearly intact; 20,000 sorted close to popularity.
+- **The constant (now 6,000; B27):** `browse.rating_weight_votes: 10000` in `scoring.yaml`, read by the API only. About the catalogue's median (12,200 votes; range 8,200 to 36,900), so a bottle needs roughly 10,000 votes before its own rating counts as much as the average. Checked on the real data: raw rating puts The Most Wanted Parfum (4.60 stars, 11,664 votes) first; the weighted rating puts Le Male Le Parfum (4.59, 28,689 votes) first. 5,000 left the raw order nearly intact; 20,000 sorted close to popularity.
 - **Why `scoring.yaml`:** the API image already copies that one file, so no Dockerfile or compose change. Its header says the last two sections need an API restart, not a pipeline run.
 - **Today every bottle has 8,000+ votes**, so the few-votes case is a guard for a bigger catalogue; the test proves it on a scratch table (5 votes at 5.0 stars lands third, not first).
 - **Rejected:** sorting by raw rating (the problem the request names); a minimum-votes cutoff (hides bottles instead of ranking them); precomputing the score in the pipeline (a constant change would need a rerun, and the mean would live in two places).
@@ -357,3 +358,32 @@ Real visitors typed "ysl myself" and "jpg" and got nothing. Two layers fix it: a
 - **No layout jump:** the thumbnail's frame has a fixed size and holds a paper-toned background until the photo is drawn, so the list is the same height before and after photos load. The images load lazily, so a closed list fetches nothing.
 - **Alt text is empty** because the name is right beside the picture, as on the cards.
 - **Not added to the Notes picker** (notes have no bottle), **or to Browse**: its search box filters the grid and has no suggestion list.
+
+### B27. The catalogue grows from 300 to 1,000 (2026-10-18)
+- **Decision:** `catalogue_size: 1000`, the 1,000 fragrances with the most rating votes. The 1,000th has about 3,579 votes. `min_strength_votes` goes from 50 to 1,000, so the ingest guard now fires well before strength becomes unreliable.
+- **Why 1,000 and not a vote floor:** floors of 500, 250, or 100 votes would admit 8,211, 14,292, or 26,313 fragrances, and the pair table grows with the square (67 million rows at 8,211). Resampling each bottle's real longevity and sillage votes flips its strength bin about 2% of the time at 4,000 or more strength votes, 3% at 1,000 to 4,000, 7% at 500 to 1,000, and 20% at 50 to 100. The 1,000's lowest is 1,613 strength votes, about 2.5%.
+- **Size:** `pair_scores` is 1,498,500 rows (999,000 Enhance, 499,500 Soften) against 134,550. The database is about 200 MB against 42 MB, precompute takes about 15 s against 1.2 s, and the seed file is 44 MB (14 MB gzipped) against 4 MB. Measured on the laptop; the EC2 timing is an estimate.
+- **Strength cutoffs kept** (Tejas's call). The split is 308 / 279 / 224 / 189 at 1,000: less-voted bottles are rated as weaker. The first 300 keep 75 / 78 / 72 / 75, and a test checks both. Retuning would have changed the strength, and so the Soften results, of bottles that already had them.
+- **Notes: the 150 stay, 17 are added (167).** Every further note used in 10 or more of the 1,000 fragrances got a draft row that Tejas reviewed (Tea, Fruity Notes, Styrax, Green Mandarin, Papyrus, White Flowers, Mango, Angelica, Chamomile, Marshmallow, Passionfruit, Blood Orange, Hibiscus, Peru Balsam, Pomegranate, Vanilla Orchid, Milk). Re-picking the top 150 would have swapped out 14 reviewed rows. Note coverage of all note mentions: 87.7% with 150 notes and no new aliases, 90.5% with 167 notes and the new aliases.
+- **Accords:** 14 new accords (73 in all). `Champagne` and `Pear` keep the dataset's capital letter, because ingest looks accords up by exact name.
+- **Aliases:** 44 new note aliases (spelling, origin, and form variants, such as Vetyver, Madagascar Vetiver, and Black Tea into Tea). Tejas removed one draft, Brazilian Redwood into Brazilian Rosewood: they are different woods.
+- **CDG fixed:** the dataset spells it "Comme des Garcons" with no cedilla, so the alias row (and the old "deliberate absentee" exemption) could never match. The row now uses the dataset spelling, matches 3 bottles, and the absentee set is empty.
+- **Highest-rated weight:** `browse.rating_weight_votes` 10,000 to 6,000, because the median vote count fell from about 12,200 to about 5,900. B24's rule (about the median) is unchanged.
+- **Small code changes:** the `owned` id list cap rose from 300 to 2,000 (a guest cannot own more bottles than exist); the About and Browse pages no longer state a count; the integration tests read the catalogue size instead of hardcoding 300 and 299.
+- **The typo search was left alone.** It compares every word without an index and takes about 12 ms for one typed word at 1,000 fragrances (B23 said to revisit at orders of magnitude).
+- **Revisit when:** the catalogue passes a few thousand fragrances. The pair table then needs a different shape (top-N per base only), and the seed becomes a bigger job.
+
+### B28. Existing fragrance ids are pinned (2026-10-18)
+- **Decision:** `pipeline/config/pinned_ids.csv` lists the id and slug of the 300 original fragrances. `load.py` inserts those with their pinned ids; new fragrances take the next id from the sequence (301 up). `ingest.py` and `load.py` both refuse a catalogue that no longer contains a pinned slug.
+- **Why:** guests' saved Own and Want lists are ids in their browsers, and so is the snapshot's slug. Production kept ids so far only because the load matches existing rows by slug. A fresh database, a rebuilt laptop, or a disaster recovery would have handed out ids in vote order, and the 1,000 interleave new bottles among the old ones, so every saved list would have pointed at the wrong bottles.
+- **Checked:** all 300 slugs survive at 1,000, in the same order, with no new collisions (slugs are checked inside the catalogue only; none of the new 700 collides with the original 300).
+- **Tests:** the pins file is valid; every pinned slug is in the catalogue; the loader refuses a catalogue that drops one; and a test creates an empty database, loads the 1,000 in reversed order, and checks that all 300 keep their ids and the new ones sit above them, then loads again and checks nothing moved. With the pinning switched off that test fails. A further test checks the dev database.
+- **The sequence** is moved past the highest pinned id before any insert, and `seed-prod.ps1` resets the `fragrances` and `notes` sequences after loading, because a data-only dump does not carry them.
+
+### B29. seed-prod.ps1 at 1,000 fragrances (2026-10-18)
+- **Id check before anything is truncated:** every fragrance in production must exist locally with the same id and slug. If not, the script stops with the first differences. An empty production passes.
+- **Gzip and keepalive:** the dump is gzipped inside the container (44 MB to 14 MB) and unzipped on the server; `ssh` and `scp` send keepalives (every 30 s) so a quiet connection is not dropped during the load.
+- **Sequence reset** for `fragrances` and `notes` after the load, and a count check: production's `fragrances,pair_scores` counts must equal the local ones, or the script fails.
+- **The lock:** TRUNCATE holds an exclusive lock for the whole transaction, so catalogue and pairing requests wait (they do not fail) until it commits. About 3 seconds at 300 fragrances; an estimated 1 to 3 minutes at 1,000 on the t3.small. Run it when the site is quiet.
+- **Not tested against the real server:** the id check, gzip, load, sequence reset, and count check were each run against a scratch local database; the ssh quoting was only parsed, not run. The first real run is the test.
+- **Still true:** B22's warning that TRUNCATE ... CASCADE must change before pass 2 accounts go live.

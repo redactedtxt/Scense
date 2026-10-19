@@ -15,7 +15,7 @@ DELIBERATELY_UNMAPPED = {"Pine Needles", "Tiare Flower"}
 def test_mapping_files_load_and_validate(cfg):
     # load_config raises on bad weights or unknown names, so loading is already a check.
     assert len(cfg.family_names) == 14 and len(cfg.facet_names) == 6
-    assert len(cfg.note_map) == 150
+    assert len(cfg.note_map) == 167
     for mapping in [*cfg.accord_map.values(), *cfg.note_map.values()]:
         assert mapping.weights.sum() == pytest.approx(1.0, abs=1e-6)
 
@@ -64,9 +64,10 @@ def test_every_catalogue_accord_is_mapped(catalogue, cfg):
 
 # --- search aliases (DECISIONS B23) -------------------------------------------------
 
-# Brands in brand_aliases.csv that the current top 300 does not contain. The alias is
-# kept for when the catalogue grows; load.py prints a note for it.
-DELIBERATELY_ABSENT_BRANDS = {"Comme des Garçons"}
+# Brands in brand_aliases.csv that the catalogue does not contain. The alias is kept for
+# when the catalogue changes and load.py prints a note for it. None today: Comme des
+# Garcons (spelled without the cedilla in the dataset) joined at 1,000 fragrances.
+DELIBERATELY_ABSENT_BRANDS: set[str] = set()
 
 
 def _words(text: str) -> list[str]:
@@ -86,7 +87,7 @@ def test_alias_files_hold_the_requested_aliases(cfg):
     assert ("ysl", "Yves Saint Laurent") in brands
     assert ("jpg", "Jean Paul Gaultier") in brands
     assert ("d&g", "Dolce&Gabbana") in brands
-    assert ("cdg", "Comme des Garçons") in brands
+    assert ("cdg", "Comme des Garcons") in brands
     assert ("mfk", "Maison Francis Kurkdjian") in brands
     assert ("pdm", "Parfums de Marly") in brands
     assert ("tf", "Tom Ford") in brands

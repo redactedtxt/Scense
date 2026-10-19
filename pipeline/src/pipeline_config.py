@@ -40,6 +40,8 @@ class Config:
     # (alias, target) pairs for search. One alias may point at several targets.
     brand_aliases: list[tuple[str, str]]
     name_aliases: list[tuple[str, str]]
+    # slug -> database id for fragrances that already exist in production (DECISIONS B28).
+    pinned_ids: dict[str, int]
 
 
 def _read_yaml(name: str, config_dir: Path) -> dict:
@@ -114,6 +116,16 @@ def read_alias_pairs(path: Path, alias_column: str, target_column: str) -> list[
     return pairs
 
 
+def read_pinned_ids(path: Path) -> dict[str, int]:
+    """Read id,slug pairs. A guest's saved Own/Want list stores these ids, so they never change."""
+    df = pd.read_csv(path, dtype={"id": int, "slug": str}, keep_default_na=False)
+    if df["id"].duplicated().any() or df["slug"].duplicated().any():
+        raise ValueError(f"{path.name}: duplicate id or slug")
+    if (df["id"] < 1).any() or (df["slug"].str.strip() == "").any():
+        raise ValueError(f"{path.name}: every row needs a positive id and a slug")
+    return dict(zip(df["slug"], df["id"].astype(int), strict=True))
+
+
 def load_config(config_dir: Path = CONFIG_DIR) -> Config:
     families = _read_yaml("families.yaml", config_dir)["families"]
     families = sorted(families, key=lambda f: f["position"])
@@ -141,4 +153,5 @@ def load_config(config_dir: Path = CONFIG_DIR) -> Config:
         note_aliases=dict(zip(aliases["alias"], aliases["canonical"], strict=True)),
         brand_aliases=read_alias_pairs(config_dir / "brand_aliases.csv", "alias", "brand"),
         name_aliases=read_alias_pairs(config_dir / "name_aliases.csv", "alias", "name_word"),
+        pinned_ids=read_pinned_ids(config_dir / "pinned_ids.csv"),
     )

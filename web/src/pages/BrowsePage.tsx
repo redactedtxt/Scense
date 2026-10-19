@@ -77,7 +77,7 @@ export function BrowsePage() {
           Browse <em className="font-normal text-gold-pale">every bottle.</em>
         </h1>
         <p className="m-0 max-w-[485px] font-display text-lg leading-[1.45] text-soft sm:text-xl">
-          The 300 most-voted fragrances on Fragrantica, with notes, accords, and community ratings.
+          The most-voted fragrances on Fragrantica, with notes, accords, and community ratings.
         </p>
       </section>
       <Filters filters={filters} onChange={setFilter} />

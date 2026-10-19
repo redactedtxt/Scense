@@ -27,10 +27,14 @@ soften:
 # (each 0..1). Cutoffs [c1, c2, c3]: < c1 -> 1, < c2 -> 2, < c3 -> 3, else 4.
 strength_cutoffs: [0.46, 0.54, 0.62]
 # ingest.py fails if a catalogue fragrance has fewer longevity + sillage votes.
-min_strength_votes: 50
+# At 1,000 votes, resampling the same votes flips a bottle's strength bin about 3% of the
+# time; at 50 it would be 20%. The 1,000-fragrance catalogue's lowest is 1,613.
+min_strength_votes: 1000
 
-# How many fragrances (by rating votes) make up the catalogue.
-catalogue_size: 300
+# How many fragrances (by rating votes) make up the catalogue. The 1,000th has about
+# 3,579 rating votes. The first 300 are the original catalogue; their ids are pinned in
+# pinned_ids.csv (DECISIONS B28), so growing this number never changes them.
+catalogue_size: 1000
 
 # Tolerance for "weights sum to 1" checks on the mapping files and profiles.
 weight_sum_tolerance: 0.000001
@@ -44,7 +48,7 @@ search:
 # Browse sort "Highest rated" (DECISIONS B24). The weighted rating is
 #   (votes * rating + m * catalogue_mean_rating) / (votes + m)
 # where m is this number: a bottle needs about m votes before its own rating counts as
-# much as the catalogue average. Today's catalogue has 8,000 to 37,000 votes per bottle
-# (median ~12,000), so 10,000 reorders the top without burying the popular bottles.
+# much as the catalogue average. The 1,000-fragrance catalogue has 3,600 to 37,000 votes per
+# bottle (median ~5,900), so 6,000 keeps the intent of B24: about the median.
 browse:
-  rating_weight_votes: 10000
+  rating_weight_votes: 6000

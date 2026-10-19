@@ -9,6 +9,8 @@ import { PAGE_SIZE } from "./fragrances.js";
 
 const goalSchema = z.enum(GOALS);
 const MAX_INPUT_NOTES = 10;
+// One id per bottle in the catalogue (1,000 today), with room to grow. A guest cannot own more bottles than exist.
+const MAX_OWNED_IDS = 2000;
 
 const notesBody = z.object({
   notes: z.array(z.string().trim().min(1).max(80)).min(1).max(MAX_INPUT_NOTES),
@@ -21,7 +23,7 @@ const ownedIds = z
   .string()
   .default("")
   .transform((text) => (text === "" ? [] : text.split(",")))
-  .pipe(z.array(wholeId).max(300));
+  .pipe(z.array(wholeId).max(MAX_OWNED_IDS));
 
 // z.coerce.boolean() would turn the string "false" into true, so spell the values out.
 const flag = z
@@ -148,7 +150,7 @@ async function findFragrance(db: Db, slug: string) {
   return rows[0];
 }
 
-// The real size of this base's list: 299 for Enhance, fewer for Soften.
+// The real size of this base's list: every other fragrance for Enhance, fewer for Soften.
 async function listSize(db: Db, baseId: number, goal: string): Promise<number> {
   const { rows } = await db.query(
     "SELECT count(*)::int AS total FROM pair_scores WHERE base_id = $1 AND goal = $2",
@@ -172,7 +174,7 @@ async function loadFamilyNames(db: Db): Promise<string[]> {
   return rows.map((r) => r.name);
 }
 
-// 150 mapped notes: cheap enough to read on every request (see DECISIONS #21).
+// The mapped notes are a short list (167 today): cheap enough to read on every request (see DECISIONS #21).
 async function loadMappedNotes(db: Db): Promise<NoteProfile[]> {
   const { rows } = await db.query("SELECT name, profile, harshness FROM notes WHERE mapped ORDER BY name");
   return rows.map((r) => ({ name: r.name, profile: r.profile, harshness: r.harshness }));
