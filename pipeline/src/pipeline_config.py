@@ -37,6 +37,9 @@ class Config:
     accord_map: dict[str, Mapping]
     note_map: dict[str, Mapping]
     note_aliases: dict[str, str]
+    # (alias, target) pairs for search. One alias may point at several targets.
+    brand_aliases: list[tuple[str, str]]
+    name_aliases: list[tuple[str, str]]
 
 
 def _read_yaml(name: str, config_dir: Path) -> dict:
@@ -96,6 +99,21 @@ def _parse_row(
     return Mapping(weights, facets)
 
 
+def read_alias_pairs(path: Path, alias_column: str, target_column: str) -> list[tuple[str, str]]:
+    """Read a search-alias CSV as (alias, target) pairs. The `check` column is ignored.
+
+    Read as text with no NA parsing, so an alias like "NA" stays a string.
+    """
+    df = pd.read_csv(path, usecols=[alias_column, target_column], dtype=str, keep_default_na=False)
+    rows = zip(df[alias_column], df[target_column], strict=True)
+    pairs = [(a.strip(), t.strip()) for a, t in rows]
+    if any(not a or not t for a, t in pairs):
+        raise ValueError(f"{path.name}: every row needs an alias and a {target_column}")
+    if len({(a.casefold(), t.casefold()) for a, t in pairs}) != len(pairs):
+        raise ValueError(f"{path.name}: duplicate alias row")
+    return pairs
+
+
 def load_config(config_dir: Path = CONFIG_DIR) -> Config:
     families = _read_yaml("families.yaml", config_dir)["families"]
     families = sorted(families, key=lambda f: f["position"])
@@ -121,4 +139,6 @@ def load_config(config_dir: Path = CONFIG_DIR) -> Config:
             config_dir / "note_map.csv", "note", family_names, facet_names, tolerance
         ),
         note_aliases=dict(zip(aliases["alias"], aliases["canonical"], strict=True)),
+        brand_aliases=read_alias_pairs(config_dir / "brand_aliases.csv", "alias", "brand"),
+        name_aliases=read_alias_pairs(config_dir / "name_aliases.csv", "alias", "name_word"),
     )

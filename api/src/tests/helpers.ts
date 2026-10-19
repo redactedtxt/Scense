@@ -1,10 +1,12 @@
 import { fileURLToPath } from "node:url";
 import { createApp } from "../app.js";
+import { loadCatalogueSettings } from "../services/catalogue.js";
 import { loadMatrices } from "../services/scoring.js";
 
 // The real scoring.yaml, so tests fail if the file and the API drift apart.
 export const SCORING_PATH = fileURLToPath(new URL("../../../pipeline/config/scoring.yaml", import.meta.url));
 export const matrices = loadMatrices(SCORING_PATH);
+export const settings = loadCatalogueSettings(SCORING_PATH);
 
 type Route = [match: RegExp, rows: unknown[] | ((params: unknown[]) => unknown[])];
 
@@ -27,7 +29,7 @@ export function fakeDb(routes: Route[]) {
 
 export function appWith(routes: Route[]) {
   const { db, calls } = fakeDb(routes);
-  return { app: createApp(db as never, matrices), calls };
+  return { app: createApp(db as never, matrices, settings), calls };
 }
 
 // A 14-value family profile with all its weight on one ring position.

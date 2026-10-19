@@ -1,7 +1,8 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
-import { toPrefixQuery } from "../routes/fragrances.js";
-import { appWith, profileAt } from "./helpers.js";
+import { searchWords, toPrefixQuery } from "../routes/fragrances.js";
+import { orderByClause, SORTS } from "../services/catalogue.js";
+import { appWith, profileAt, settings } from "./helpers.js";
 
 // These tests use a fake database, so they check HTTP behaviour: validation, status
 // codes, JSON shapes. The SQL itself is checked in integration.test.ts.
@@ -85,6 +86,89 @@ describe("toPrefixQuery", () => {
     expect(toPrefixQuery("a'; DROP | & ! (x)")).toBe("a:* & DROP:* & x:*");
     expect(toPrefixQuery("Hermès")).toBe("Hermès:*");
     expect(toPrefixQuery("  !! ")).toBeNull();
+  });
+
+  it("searches an alias with punctuation as a phrase, with one-letter words exact", () => {
+    expect(toPrefixQuery("d&g")).toBe("(d <-> g)");
+    expect(toPrefixQuery("ysl myself")).toBe("ysl:* & myself:*");
+    expect(toPrefixQuery("jpg le male")).toBe("jpg:* & le:* & male:*");
+    expect(toPrefixQuery("marc-anto")).toBe("(marc:* <-> anto:*)");
+  });
+});
+
+describe("searchWords", () => {
+  it("lists the words the typo fallback compares, without one-letter words", () => {
+    expect(searchWords("Sauvge Elixr")).toEqual(["Sauvge", "Elixr"]);
+    expect(searchWords("angel's share")).toEqual(["angel", "share"]);
+    expect(searchWords("a b")).toEqual([]);
+    expect(searchWords("one two three four five six seven")).toHaveLength(6);
+  });
+});
+
+describe("GET /api/fragrances sorting and the typo fallback", () => {
+  const row = { id: 9, slug: "dior-sauvage-2015", name: "Sauvage", brand: "Dior", gender: "male", release_year: 2015,
+    image_url: null, community_rating: 4.2, rating_votes: 30000, strength: 3, family: "Aromatic Fougère" };
+  // The first matching pattern answers, so the fuzzy queries (which also say "count" and
+  // "FROM fragrances f") come first.
+  const routes = (exact: number, textMatches: boolean) =>
+    [
+      [/WITH scored[\s\S]*count\(\*\)/, [{ total: 1 }]],
+      [/WITH scored/, [row]],
+      [/EXISTS/, [{ found: textMatches }]],
+      [/count\(\*\)/, [{ total: exact }]],
+      [/FROM fragrances f/, exact ? [row] : []],
+    ] as Parameters<typeof appWith>[0];
+  const fuzzyCalls = (calls: { sql: string; params: unknown[] }[]) => calls.filter((c) => c.sql.includes("WITH scored"));
+
+  it("orders by the chosen sort, popular by default", async () => {
+    const orderOf = async (sort?: string) => {
+      const { app, calls } = appWith(routes(1, true));
+      await request(app).get("/api/fragrances").query(sort ? { sort } : {});
+      return calls.at(-1)!.sql;
+    };
+    expect(await orderOf()).toContain(`ORDER BY ${orderByClause("popular", settings)}`);
+    expect(await orderOf("least-popular")).toContain("f.rating_votes ASC NULLS LAST, f.id");
+    const rated = await orderOf("highest-rated");
+    expect(rated).toContain(`ORDER BY ${orderByClause("highest-rated", settings)}`);
+    expect(rated).toContain(`${settings.ratingWeightVotes} *`); // the constant comes from scoring.yaml
+  });
+
+  it("gives every sort its own order and ends each with the id", () => {
+    const clauses = SORTS.map((sort) => orderByClause(sort, settings));
+    expect(new Set(clauses).size).toBe(SORTS.length);
+    for (const clause of clauses) expect(clause).toMatch(/f\.id$/);
+  });
+
+  it("rejects an unknown sort", async () => {
+    const { app } = appWith(routes(1, true));
+    const res = await request(app).get("/api/fragrances?sort=cheapest");
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("invalid_request");
+  });
+
+  it("falls back to near-miss matching when nothing matches the text", async () => {
+    const { app, calls } = appWith(routes(0, false));
+    const res = await request(app).get("/api/fragrances").query({ q: "sauvge", gender: "male" });
+    expect(res.body).toMatchObject({ fuzzy: true, total: 1 });
+    expect(res.body.items[0]).toMatchObject({ name: "Sauvage" });
+    // words, minimum similarity from scoring.yaml, then gender, family, offset
+    expect(fuzzyCalls(calls).at(-1)!.params).toEqual([["sauvge"], settings.fuzzyMinSimilarity, "male", null, 0]);
+  });
+
+  it("does not fall back when the text matches and only the filters excluded it", async () => {
+    const { app, calls } = appWith(routes(0, true));
+    const res = await request(app).get("/api/fragrances").query({ q: "sauvage", gender: "female" });
+    expect(res.body).toMatchObject({ fuzzy: false, total: 0, items: [] });
+    expect(fuzzyCalls(calls)).toHaveLength(0);
+  });
+
+  it("does not fall back for an empty search or when the text matched", async () => {
+    for (const query of [{}, { q: "sauvage" }]) {
+      const { app, calls } = appWith(routes(1, true));
+      const res = await request(app).get("/api/fragrances").query(query);
+      expect(res.body.fuzzy).toBe(false);
+      expect(fuzzyCalls(calls)).toHaveLength(0);
+    }
   });
 });
 

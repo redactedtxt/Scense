@@ -29,7 +29,9 @@ export function RankFinder({ baseSlug, baseName, goal, total }: Props) {
         items={suggestions.data ?? []}
         loading={suggestions.isFetching}
         itemKey={(f) => f.slug}
-        renderItem={(f) => <SuggestionRow title={f.name} detail={f.brand} />}
+        renderItem={(f) => (
+          <SuggestionRow title={f.name} detail={f.brand} image={{ src: f.imageUrl, family: f.dominantFamily }} />
+        )}
         onSelect={(f) => {
           setPicked(f);
           setText(f.name);

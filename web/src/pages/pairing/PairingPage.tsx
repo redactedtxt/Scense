@@ -1,5 +1,6 @@
 import { formatCount } from "../../lib/labels";
 import { useCatalogueTotal, useFragrance } from "../../lib/queries";
+import { EmptyPrompt } from "./EmptyPrompt";
 import { FragranceResults } from "./FragranceResults";
 import { NoteResults } from "./NoteResults";
 import { PairingDesk } from "./PairingDesk";
@@ -17,7 +18,7 @@ export function PairingPage() {
       <PairingDesk
         mode={mode}
         goal={goal}
-        base={{ data: base.data, isError: base.isError }}
+        base={{ data: base.data, isError: base.isError, chosen: baseSlug !== null }}
         notes={notes}
         onModeChange={(next) => update({ mode: next })}
         onGoalChange={(next) => update({ goal: next })}
@@ -26,7 +27,11 @@ export function PairingPage() {
       />
       <section aria-label="Results" className="pt-20 pb-20 sm:pt-[105px] sm:pb-[110px]">
         {mode === "fragrance" ? (
-          base.isError ? null : <FragranceResults base={base.data} baseSlug={baseSlug} goal={goal} />
+          baseSlug === null ? (
+            <EmptyPrompt mode="fragrance" goal={goal} />
+          ) : base.isError ? null : (
+            <FragranceResults base={base.data} baseSlug={baseSlug} goal={goal} />
+          )
         ) : (
           <NoteResults notes={notes} goal={goal} />
         )}
