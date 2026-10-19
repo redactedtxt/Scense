@@ -71,17 +71,42 @@ def _upsert_notes(cur, notes: pd.DataFrame, cfg: Config) -> dict[str, int]:
     return ids
 
 
+def _check_pinned_ids(fragrances: pd.DataFrame, cfg: Config) -> None:
+    """A pinned fragrance that leaves the catalogue (or whose slug changes) would orphan
+    the ids guests have saved, so refuse to load rather than quietly drop it."""
+    missing = sorted(set(cfg.pinned_ids) - set(fragrances["slug"]))
+    if missing:
+        raise ValueError(f"pinned fragrances missing from the catalogue: {missing[:5]}")
+
+
+def _reserve_pinned_ids(cur, cfg: Config) -> None:
+    """Move the id sequence past every pinned id, so a new fragrance can never be handed
+    an id that a pinned fragrance (inserted later in the loop) is about to claim."""
+    cur.execute(
+        """SELECT setval(pg_get_serial_sequence('fragrances', 'id'),
+                         GREATEST((SELECT coalesce(max(id), 0) FROM fragrances), %s, 1))""",
+        (max(cfg.pinned_ids.values(), default=0),),
+    )
+
+
 def _upsert_fragrances(cur, fragrances: pd.DataFrame, cfg: Config) -> list[int]:
-    """Returns database ids in the same order as the `fragrances` rows."""
+    """Returns database ids in the same order as the `fragrances` rows.
+
+    Pinned fragrances are inserted with their pinned id; new ones take the next id from the
+    sequence. An existing row is matched by slug and keeps whatever id it has.
+    """
+    _check_pinned_ids(fragrances, cfg)
+    _reserve_pinned_ids(cur, cfg)
     facet_names = cfg.facet_names
     ids = []
     for row in fragrances.itertuples():
         year = None if pd.isna(row.release_year) else int(row.release_year)
         cur.execute(
-            """INSERT INTO fragrances (slug, name, brand, gender, release_year, image_url,
+            """INSERT INTO fragrances (id, slug, name, brand, gender, release_year, image_url,
                  community_rating, rating_votes, profile, facets, harshness, strength,
                  seasons, daynight)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               VALUES (coalesce(%s, nextval(pg_get_serial_sequence('fragrances', 'id'))),
+                       %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, brand = EXCLUDED.brand,
                  gender = EXCLUDED.gender, release_year = EXCLUDED.release_year,
                  image_url = EXCLUDED.image_url, community_rating = EXCLUDED.community_rating,
@@ -91,7 +116,8 @@ def _upsert_fragrances(cur, fragrances: pd.DataFrame, cfg: Config) -> list[int]:
                  daynight = EXCLUDED.daynight
                RETURNING id""",
             (
-                row.slug, row.name, row.brand, row.gender, year, row.image_url,
+                cfg.pinned_ids.get(row.slug), row.slug, row.name, row.brand, row.gender, year,
+                row.image_url,
                 float(row.community_rating), int(row.rating_votes),
                 [float(x) for x in row.profile], _facet_json(facet_names, row.facets),
                 float(row.harshness), int(row.strength),

@@ -382,7 +382,7 @@ The first push to `main` with M6 runs CI, builds and pushes the three images, an
     ./scripts/seed-prod.ps1
     ```
 
-    It ends with `Production now has 300 fragrances.` You can rerun it after every `pipeline` or `tune` run. Pass 2 changes that; see DECISIONS.md B22.
+    It first checks that production's fragrance ids match your local database, then ends with `Production now has 1000 fragrances (1000,1498500 = fragrances,pair_scores).` At 1,000 fragrances the upload is about 14 MB and the load locks the catalogue tables for roughly 1 to 3 minutes (an estimate), so run it when the site is quiet; see DECISIONS.md B29. You can rerun it after every `pipeline` or `tune` run. Pass 2 changes that; see DECISIONS.md B22.
 
 89. Check `https://www.scense.name` redirects to `https://scense.name`, and that `https://scense.name/f/creed-aventus-2010` loads.
 90. **Server** (`ssh -i "$HOME\.ssh\ScenseKeyPair.pem" ubuntu@3.97.35.62`): run one backup now instead of waiting for 3 a.m.:

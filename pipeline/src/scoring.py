@@ -128,7 +128,7 @@ def score_matrix(
 ) -> np.ndarray:
     """Every (base row, partner column) fragrance score at once. NaN marks a dropped pair.
 
-    Same maths as `pair_score`, vectorised so 300 x 300 pairs take milliseconds.
+    Same maths as `pair_score`, vectorised so 1,000 x 1,000 pairs take seconds.
     The diagonal (a fragrance paired with itself) is NaN: it is never a result.
     """
     if goal == ENHANCE:

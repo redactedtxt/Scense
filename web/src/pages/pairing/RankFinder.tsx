@@ -79,7 +79,7 @@ function RankAnswer({
   );
 }
 
-// .rank-result: name on the left, "#38 of 299" on the right.
+// .rank-result: name on the left, "#38 of 999" on the right.
 function RankLine(props: { name: string; figure: string; total: number | null; faded?: boolean; slug?: string }) {
   return (
     <div className={`flex items-center justify-between gap-5 transition-opacity duration-[180ms] ${props.faded ? "opacity-25" : ""}`}>

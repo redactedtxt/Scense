@@ -1,4 +1,4 @@
-"""Step 2: turn the raw Kaggle CSV into a clean 300-row catalogue (parquet).
+"""Step 2: turn the raw Kaggle CSV into a clean catalogue (parquet).
 
 Column names come from pipeline/DATASET_NOTES.md (written from inspect_dataset.py).
 Usage: python src/ingest.py
@@ -92,6 +92,10 @@ def check_catalogue(catalogue: pd.DataFrame, cfg: Config) -> None:
         raise ValueError(f"accords missing from accord_map.csv: {unmapped}")
     if catalogue["slug"].duplicated().any():
         raise ValueError("slug collision survived the id suffix")
+    # Guests' saved Own/Want ids point at these fragrances (DECISIONS B28).
+    lost = sorted(set(cfg.pinned_ids) - set(catalogue["slug"]))
+    if lost:
+        raise ValueError(f"pinned fragrances missing from the catalogue: {lost[:5]}")
     for column in ("winter", "spring", "summer", "autumn"):
         if (catalogue[column] < 0).any():
             raise ValueError(f"negative votes in {column}")

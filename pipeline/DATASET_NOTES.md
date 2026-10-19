@@ -1,5 +1,7 @@
 # DATASET_NOTES.md
 
+> The catalogue is now the **top 1,000** by rating votes (DECISIONS B27); the sections below were written at 300 and describe the dataset itself, which has not changed. The section at the end has the 1,000-fragrance numbers.
+
 What is in `pipeline/raw/` and which fields the pipeline will use. Produced by `src/inspect_dataset.py`; re-run it to reproduce every number below.
 
 ## Files
@@ -62,3 +64,14 @@ Strength is computed from votes only (SPEC 3.4 step 4). The 0-1 value is the mea
 7. **Year has junk values** in the full set (min 20, max 2027). None in the top 300.
 
 The CSV stores the vote blob as zeros, not nulls, when it is missing (3,116 rows have null `people` and all-zero votes). None are in the top 300.
+
+## The top 1,000 (DECISIONS B27)
+
+- `vote_count` range: 3,579 to 36,883. The 1,000th sits at 3,579.
+- Gender: 468 female, 273 male, 259 unisex. Year is missing for 12.
+- Nothing is missing: every one has accords and notes. Longevity + sillage votes: minimum 1,613 (757 longevity, 856 sillage), median 5,525.
+- **Accords:** 73 distinct, all in `accord_map.csv`. The 14 added at 1,000 are conifer, sour, camphor, vodka, terpenic, Champagne, bitter, alcohol, vinyl, coca-cola, Pear, spice, plastic, and rubber.
+- **Notes:** 663 canonical names before the new aliases, 619 stored after them. `note_map.csv` has 167 notes.
+- **Comme des Garcons** is in the dataset without a cedilla (3 bottles at 1,000).
+- **Slugs:** no collisions; all 300 original slugs are unchanged.
+- **Strength split** with the unchanged cutoffs: 308 / 279 / 224 / 189.
