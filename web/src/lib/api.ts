@@ -1,7 +1,7 @@
 // Typed wrappers around the pass 1 API (SPEC section 7). Field names match the JSON the
 // API sends (camelCase); stored values stay as the dataset has them ("male", "autumn").
 
-import { getState } from "./guestStore";
+import { getState, type CollectionStatus, type SavedFragrance } from "./guestStore";
 
 export type Goal = "enhance" | "soften";
 export type Gender = "male" | "female" | "unisex";
@@ -84,6 +84,10 @@ export type RankResult =
 
 export type Family = { id: number; name: string; harshness: number };
 
+export type User = { id: number; email: string; displayName: string };
+
+export type ImportItem = { fragranceId: number; status: CollectionStatus; addedAt?: string };
+
 // Carries the API's error code so pages can tell "not found" from "server down".
 export class ApiError extends Error {
   constructor(
@@ -96,7 +100,8 @@ export class ApiError extends Error {
 }
 
 // Every request carries the guest id (SPEC section 6). Pass 1 ignores it; pass 2's
-// LLM caps count conversations per guest with it.
+// LLM caps count conversations per guest with it. The session cookie rides along on its
+// own: these are same-origin requests, and fetch sends cookies to its own origin.
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...init,
@@ -111,6 +116,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const error = body?.error ?? {};
     throw new ApiError(res.status, error.code ?? "network_error", error.message ?? "Something went wrong.");
   }
+  // 204 No Content (logout, delete) has no body; callers of those expect nothing.
   return body as T;
 }
 
@@ -153,4 +159,29 @@ export const api = {
     request<RankResult>(
       `/pairing/fragrances/${encodeURIComponent(slug)}/rank/${encodeURIComponent(partnerSlug)}${query({ goal })}`,
     ),
+
+  // --- accounts (pass 2, M7) ---
+  me: () => request<{ user: User }>("/auth/me"),
+
+  signup: (body: { email: string; displayName: string; password: string }) =>
+    request<{ user: User }>("/auth/signup", { method: "POST", body: JSON.stringify(body) }),
+
+  login: (body: { email: string; password: string }) =>
+    request<{ user: User }>("/auth/login", { method: "POST", body: JSON.stringify(body) }),
+
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
+
+  // --- a signed-in user's collection; items have the guest store's shape ---
+  collection: () => request<{ items: SavedFragrance[] }>("/collection"),
+
+  setCollectionStatus: (fragranceId: number, status: CollectionStatus) =>
+    request<SavedFragrance>(`/collection/${fragranceId}`, { method: "PUT", body: JSON.stringify({ status }) }),
+
+  removeFromCollection: (fragranceId: number) => request<void>(`/collection/${fragranceId}`, { method: "DELETE" }),
+
+  importCollection: (items: ImportItem[]) =>
+    request<{ imported: number; skipped: number }>("/collection/import", {
+      method: "POST",
+      body: JSON.stringify({ items }),
+    }),
 };

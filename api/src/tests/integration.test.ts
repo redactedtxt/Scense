@@ -3,7 +3,7 @@ import request from "supertest";
 import { afterAll, describe, expect, it } from "vitest";
 import { createApp } from "../app.js";
 import { orderByClause, SORTS } from "../services/catalogue.js";
-import { matrices, settings } from "./helpers.js";
+import { auth, matrices, settings } from "./helpers.js";
 
 // Runs the real SQL against a Postgres that `python pipeline/src/run.py pipeline` has
 // loaded. Skipped when TEST_DATABASE_URL is not set, so CI (which has no database)
@@ -13,7 +13,7 @@ const url = process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!url)("against the loaded catalogue", () => {
   const pool = new pg.Pool({ connectionString: url });
-  const app = createApp(pool, matrices, settings);
+  const app = createApp(pool, matrices, settings, auth);
   afterAll(() => pool.end());
 
   // The catalogue size is read, not hardcoded, so growing it never breaks these tests.

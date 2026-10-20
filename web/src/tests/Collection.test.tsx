@@ -47,7 +47,8 @@ describe("Want and Own on the fragrance page", () => {
     loadGuestState();
     renderAt("/me");
     const panel = screen.getByRole("tabpanel");
-    expect(within(panel).getByRole("heading", { name: "Aventus" })).toBeInTheDocument();
+    // The list appears once the page knows this visitor is a guest (GET /api/auth/me).
+    expect(await within(panel).findByRole("heading", { name: "Aventus" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Own/ })).toHaveAttribute("aria-selected", "true");
 
     await userEvent.click(screen.getByRole("tab", { name: /Want/ }));
@@ -77,7 +78,7 @@ describe("the /me page", () => {
 
     renderAt("/me?tab=want");
     const panel = screen.getByRole("tabpanel");
-    await userEvent.click(within(panel).getByRole("button", { name: "Want Aventus" }));
+    await userEvent.click(await within(panel).findByRole("button", { name: "Want Aventus" }));
     expect(within(panel).getByText("Your Want list is empty.")).toBeInTheDocument();
   });
 
