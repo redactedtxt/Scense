@@ -1,4 +1,4 @@
-import { toggleStatus, useCollectionStatus } from "../lib/collection";
+import { useCollectionStatus, useCollectionView, useToggleStatus } from "../lib/collection";
 import type { CollectionStatus, FragranceSnapshot } from "../lib/guestStore";
 
 const BUTTONS: { status: CollectionStatus; label: string }[] = [
@@ -25,6 +25,10 @@ export function CollectionButtons({
   name?: string;
 }) {
   const current = useCollectionStatus(fragrance.id);
+  const toggleStatus = useToggleStatus();
+  // Disabled for the moment it takes to learn who is signed in, so a click can't land
+  // in the browser's list when it belongs in the account's.
+  const { ready } = useCollectionView();
   return (
     <div role="group" aria-label="Collection" className="flex gap-2">
       {BUTTONS.map(({ status, label }) => {
@@ -34,9 +38,10 @@ export function CollectionButtons({
             key={status}
             type="button"
             aria-pressed={pressed}
+            disabled={!ready}
             aria-label={name ? `${label} ${name}` : undefined}
             onClick={() => toggleStatus(fragrance, current, status)}
-            className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border font-semibold uppercase transition-colors duration-[180ms] ${SIZES[size]} ${
+            className={`inline-flex cursor-pointer items-center disabled:cursor-default disabled:opacity-50 gap-1.5 rounded-full border font-semibold uppercase transition-colors duration-[180ms] ${SIZES[size]} ${
               pressed
                 ? "border-gold-deep bg-gold-deep text-on-gold hover:bg-gold"
                 : "border-line-control text-muted hover:border-gold-deep hover:text-text-bright"

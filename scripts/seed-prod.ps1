@@ -8,24 +8,27 @@
 #   ./scripts/seed-prod.ps1
 #   ./scripts/seed-prod.ps1 -KeyPath "$HOME\.ssh\other.pem" -HostName 3.97.35.62
 #
-# It replaces the catalogue tables only (families, fragrances, notes, their links,
-# pair_scores, and the two search-alias tables). llm_usage is left alone. The search
-# vectors travel inside the fragrances table. See DECISIONS.md B22 before running it
-# once pass 2 accounts exist: TRUNCATE ... CASCADE would also empty tables that
-# point at fragrances (collections, reviews, pair ratings).
+# It replaces the catalogue only (families, fragrances, notes, their links, pair_scores,
+# and the two search-alias tables) and never deletes a user's data (DECISIONS B32). The
+# catalogue travels in a separate `seed` schema (scripts/seed/stage.sql), and on the server
+# scripts/seed/merge.sql updates fragrances in place by id, adds new ones, and refills the
+# tables only the pipeline writes. Users, collections, reviews, pair ratings, taste
+# profiles, and llm_usage are untouched; pipeline/tests/test_seed_merge.py proves it.
+# The search vectors travel inside the fragrances table.
 #
-# At 1,000 fragrances the load holds an exclusive lock on the catalogue tables for the
-# whole transaction (about 1 to 3 minutes on the t3.small, an estimate), so catalogue and
+# At 1,000 fragrances the load holds a lock on the catalogue tables for the whole
+# transaction (about 1 to 3 minutes on the t3.small, an estimate), so catalogue and
 # pairing requests wait until it commits. Run it when the site is quiet. See DECISIONS B29.
 #
 # What it checks and does beyond the plain copy (DECISIONS B28, B29):
 #   - Before touching production, every fragrance already there must have the same id AND
-#     slug in your local database. Guests' saved Own/Want lists store these ids, so a
-#     mismatch stops the script before anything is truncated.
+#     slug in your local database. Guests' saved lists and users' collections store these
+#     ids, so a mismatch stops the script before anything changes. merge.sql repeats the
+#     check inside the transaction, so it holds even if this script is bypassed.
 #   - The dump is gzipped before upload (about a third of the size at 1,000 fragrances).
 #   - SSH sends keepalives, so a quiet connection during the long load is not dropped.
-#   - After the load the id sequences are moved past the highest id, because a data-only
-#     dump does not carry them and a later insert would otherwise reuse an id.
+#   - After the load the id sequences are moved past the highest id (merge.sql), because
+#     explicit ids never advance a sequence and a later insert would otherwise reuse one.
 
 param(
     [string]$KeyPath = "$HOME\.ssh\ScenseKeyPair.pem",
@@ -36,7 +39,6 @@ param(
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
-$tables = "families", "fragrances", "notes", "fragrance_notes", "fragrance_accords", "pair_scores", "brand_aliases", "name_aliases"
 $dumpFile = Join-Path ([IO.Path]::GetTempPath()) "scense-catalogue.sql.gz"
 $target = "$User@$HostName"
 $compose = "docker compose -f docker-compose.prod.yml"
@@ -61,35 +63,38 @@ Write-Host "Id check passed: $($prodIds.Count) production fragrances match local
 
 $localCounts = (docker compose exec -T db psql -U scense -d scense -tA -F "," -c "SELECT (SELECT count(*) FROM fragrances), (SELECT count(*) FROM pair_scores)" | Select-Object -Last 1).Trim()
 
-# 1. Dump inside the container, gzip it there, and copy the file out. Redirecting pg_dump's
-#    output through PowerShell could re-encode accented names (Hermès); a file copy can't.
-$tableArgs = $tables | ForEach-Object { "--table=$_" }
-docker compose exec -T db pg_dump -U scense -d scense --data-only @tableArgs --file=/tmp/catalogue.sql
+# 1. Copy the catalogue into a local `seed` schema, dump that schema (tables and data) inside
+#    the container, gzip it there, and copy the file out. Redirecting pg_dump's output
+#    through PowerShell could re-encode accented names (Hermès); a file copy can't. The
+#    local `seed` schema is dropped straight after, so the dev database is left as it was.
+docker compose cp scripts/seed/stage.sql db:/tmp/stage.sql
+docker compose exec -T db psql -U scense -d scense -q -v ON_ERROR_STOP=1 -f /tmp/stage.sql
+docker compose exec -T db pg_dump -U scense -d scense --schema=seed --no-owner --no-privileges --file=/tmp/catalogue.sql
+docker compose exec -T db psql -U scense -d scense -q -c "DROP SCHEMA seed CASCADE"
 docker compose exec -T db gzip -f /tmp/catalogue.sql
 docker compose cp db:/tmp/catalogue.sql.gz $dumpFile
-docker compose exec -T db rm -f /tmp/catalogue.sql.gz
+docker compose exec -T db rm -f /tmp/catalogue.sql.gz /tmp/stage.sql
 Write-Host "Dumped and gzipped $((Get-Item $dumpFile).Length) bytes from the local database."
 
-# 2. Upload it to the server.
+# 2. Upload the dump and the merge script to the server.
 scp @sshOptions $dumpFile "${target}:/opt/scense/catalogue.sql.gz"
+scp @sshOptions scripts/seed/merge.sql "${target}:/opt/scense/merge.sql"
 
-# 3. Load it. TRUNCATE and the data run in one transaction (-1), so a failure leaves
-#    the old catalogue in place. ON_ERROR_STOP makes the first error abort the load.
-#    The sequence reset uses $$ quoting so the SQL has no single quotes inside the
-#    single-quoted -c argument.
-$truncate = "TRUNCATE " + ($tables -join ", ") + " CASCADE"
-$resetSequences = 'SELECT setval($$fragrances_id_seq$$, (SELECT max(id) FROM fragrances)), setval($$notes_id_seq$$, (SELECT max(id) FROM notes))'
+# 3. Load it. Everything runs in one transaction (-1): drop any leftover `seed` schema, let
+#    the dump recreate it, then merge.sql copies it into the real tables and drops it. A
+#    failure anywhere rolls all of it back and leaves production as it was. ON_ERROR_STOP
+#    makes the first error abort the load.
 $counts = 'SELECT (SELECT count(*) FROM fragrances) || $$,$$ || (SELECT count(*) FROM pair_scores)'
 $remote = @(
     "set -eu",
     "cd /opt/scense",
     "gunzip -f catalogue.sql.gz",
     "$compose cp catalogue.sql db:/tmp/catalogue.sql",
-    "$compose exec -T db psql -U scense -d scense -1 -v ON_ERROR_STOP=1 -c '$truncate' -f /tmp/catalogue.sql",
-    "$compose exec -T db psql -U scense -d scense -c '$resetSequences'",
+    "$compose cp merge.sql db:/tmp/merge.sql",
+    "$compose exec -T db psql -U scense -d scense -1 -v ON_ERROR_STOP=1 -c 'DROP SCHEMA IF EXISTS seed CASCADE' -f /tmp/catalogue.sql -f /tmp/merge.sql",
     "$compose exec -T db psql -U scense -d scense -c 'ANALYZE'",
-    "$compose exec -T db rm /tmp/catalogue.sql",
-    "rm catalogue.sql",
+    "$compose exec -T db rm /tmp/catalogue.sql /tmp/merge.sql",
+    "rm catalogue.sql merge.sql",
     "$compose exec -T db psql -U scense -d scense -tA -c '$counts'"
 ) -join " && "
 $prodCounts = (ssh @sshOptions $target $remote | Select-Object -Last 1).Trim()

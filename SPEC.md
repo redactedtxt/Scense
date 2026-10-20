@@ -408,10 +408,11 @@ All responses JSON. Validate every body and query with Zod. Errors return `{ err
 
 | Method | Path | Notes |
 |---|---|---|
-| POST | `/api/auth/signup` | email, display name, password ≥ 10 chars |
+| POST | `/api/auth/signup` | email, display name, password ≥ 10 chars (and ≤ 72 bytes, bcrypt's limit). Rate-limit 5 per hour per IP |
 | POST | `/api/auth/login` | Rate-limit 5 attempts per 15 min per IP + email |
-| POST | `/api/auth/logout` | Clears cookie |
+| POST | `/api/auth/logout` | Clears cookie. The token is not revoked (known limitation, DECISIONS B31) |
 | GET | `/api/auth/me` | Current user or 401 |
+| GET | `/api/collection` | The signed-in user's whole collection, in the guest store's item shape (M7; DECISIONS B31) |
 | GET/PUT/DELETE | `/api/collection/:fragranceId` | status own or want |
 | POST | `/api/collection/import` | Guest import on sign-in |
 | GET/PUT | `/api/profile/taste` | Read and edit the taste profile |
@@ -420,7 +421,7 @@ All responses JSON. Validate every body and query with Zod. Errors return `{ err
 | GET/POST/PUT/DELETE | `/api/fragrances/:id/reviews` | One review per user per fragrance |
 | PUT | `/api/pair-ratings` | Store only |
 
-Auth: bcrypt cost 12. JWT signed with `JWT_SECRET`, 7-day expiry, in an httpOnly, Secure, SameSite=Lax cookie. Add `helmet` and a CORS allowlist from `CORS_ORIGIN` (production value: `https://scense.name`).
+Auth: bcrypt cost 12. JWT signed with `JWT_SECRET`, 7-day expiry, in an httpOnly, Secure, SameSite=Lax cookie. Add `helmet` and a CORS allowlist from `CORS_ORIGIN` (production value: `https://scense.name`). Express trusts exactly one proxy hop (Caddy), so rate limits see the visitor's address (DECISIONS B31).
 
 ---
 
@@ -588,8 +589,8 @@ Stop after each one. Report: what you built, files to read first, commands to ru
 ### Pass 2
 | # | Milestone | Done when |
 |---|---|---|
-| M7 | Accounts and guest import | Signup, login, logout, import; auth tests pass |
-| M8 | Reviews, pair ratings, collection API | Guests blocked; one review per user per fragrance |
+| M7 | Accounts, collection API, and guest import | Signup, login, logout, import; a signed-in user's Own and Want save to the account; auth and rate-limit tests pass; a reseed keeps user data (tested). The collection API moved here from M8 so the site never shows sign-in with browser-only saves (DECISIONS B31) |
+| M8 | Reviews and pair ratings | Guests blocked; one review per user per fragrance |
 | M9 | Chatbot, taste profile card, caps | Cap enforced at message 9 and at the guest site-wide cap; JSON validation tested with mocked LLM responses |
 | M10 | Concierge | Asks for missing slots; empty-collection fallback works |
 | M11 | Polish | Playwright smoke tests (pair a fragrance, chat once, concierge once); README skeleton with setup steps; Lighthouse accessibility ≥ 90 |

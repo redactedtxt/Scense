@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, ScrollRestoration } from "react-router";
+import { Link, NavLink, Outlet, ScrollRestoration, useLocation } from "react-router";
 import { useStorageBlocked } from "../lib/collection";
+import { useSession, useSignOut } from "../lib/session";
 import { Logo } from "./Logo";
 
-// Only pages that exist get a link. Chat, Concierge, and Sign in arrive in pass 2 and
-// join this list then.
+// Only pages that exist get a link. Chat and Concierge join this list when they land.
 const NAV_ITEMS = [
   { to: "/", label: "Pair" },
   { to: "/browse", label: "Browse" },
@@ -84,9 +84,55 @@ function Header() {
               {item.label}
             </NavLink>
           ))}
+          <div className="md:hidden">
+            <AccountControl onNavigate={() => setMenuOpen(false)} />
+          </div>
         </nav>
+        <div className="hidden justify-self-end md:block">
+          <AccountControl />
+        </div>
       </div>
     </header>
+  );
+}
+
+// The header's top-right corner (Figma .sign-in): "Sign in" with a gold underline for a
+// guest, or the user's name and "Sign out". Nothing while the session is still loading,
+// so a signed-in visitor never sees "Sign in" flash. The link carries ?next= so signing
+// in returns to the page the visitor was on.
+function AccountControl({ onNavigate }: { onNavigate?: () => void }) {
+  const { user, loading } = useSession();
+  const signOut = useSignOut();
+  const location = useLocation();
+  if (loading) return null;
+  const linkStyle =
+    "border-b border-gold-line py-[5px] text-[11px] font-medium tracking-[0.11em] text-muted uppercase transition-colors duration-[180ms] hover:text-text-bright";
+  if (!user) {
+    const here = location.pathname + location.search;
+    const onAuthPage = location.pathname === "/login" || location.pathname === "/signup";
+    const href = here === "/" || onAuthPage ? "/login" : `/login?next=${encodeURIComponent(here)}`;
+    return (
+      <Link to={href} onClick={onNavigate} className={linkStyle}>
+        Sign in
+      </Link>
+    );
+  }
+  return (
+    <div className="flex items-center gap-4">
+      <span className="max-w-[160px] truncate font-display text-[15px] text-soft" title={user.email}>
+        {user.displayName}
+      </span>
+      <button
+        type="button"
+        onClick={() => {
+          onNavigate?.();
+          void signOut();
+        }}
+        className={`cursor-pointer bg-transparent ${linkStyle}`}
+      >
+        Sign out
+      </button>
+    </div>
   );
 }
 

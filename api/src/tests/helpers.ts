@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { createApp } from "../app.js";
+import { authSettings, loadConfig } from "../config.js";
 import { loadCatalogueSettings } from "../services/catalogue.js";
 import { loadMatrices } from "../services/scoring.js";
 
@@ -7,6 +8,12 @@ import { loadMatrices } from "../services/scoring.js";
 export const SCORING_PATH = fileURLToPath(new URL("../../../pipeline/config/scoring.yaml", import.meta.url));
 export const matrices = loadMatrices(SCORING_PATH);
 export const settings = loadCatalogueSettings(SCORING_PATH);
+
+// The real config loader with test values: cost 4 so hashing is quick, and the default
+// limits (5 per 15 minutes for login, 5 per hour for signup) so the tests check them.
+export const auth = authSettings(
+  loadConfig({ DATABASE_URL: "unused", JWT_SECRET: "test-secret-that-is-at-least-32-chars", BCRYPT_COST: "4" }),
+);
 
 type Route = [match: RegExp, rows: unknown[] | ((params: unknown[]) => unknown[])];
 
@@ -27,9 +34,9 @@ export function fakeDb(routes: Route[]) {
   return { db, calls };
 }
 
-export function appWith(routes: Route[]) {
+export function appWith(routes: Route[], now?: () => number) {
   const { db, calls } = fakeDb(routes);
-  return { app: createApp(db as never, matrices, settings), calls };
+  return { app: createApp(db as never, matrices, settings, auth, now), calls };
 }
 
 // A 14-value family profile with all its weight on one ring position.

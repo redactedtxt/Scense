@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { BottleImage } from "../components/BottleImage";
 import { CollectionButtons } from "../components/CollectionButtons";
+import { ImportOffer } from "../components/ImportOffer";
 import { ArrowIcon } from "../components/Icons";
 import { Notice, Tag, TextTabs } from "../components/ui";
-import { useCollection } from "../lib/collection";
+import { useCollectionView, useGuestCollection } from "../lib/collection";
 import type { CollectionStatus, SavedFragrance } from "../lib/guestStore";
 
 const PANEL_ID = "collection-panel";
@@ -12,13 +14,14 @@ const EMPTY_MESSAGES: Record<CollectionStatus, string> = {
   want: "Your Want list is empty.",
 };
 
-// "/me": the guest's Own and Want lists, read from guestStore (no API call: each saved
-// entry carries the name, brand, and image it needs). The taste profile card joins
-// this page with the pass 2 chatbot. The open tab lives in the URL (?tab=want).
+// "/me": the Own and Want lists, from the browser for a guest or the account once signed
+// in (lib/collection.ts decides; each entry carries the name, brand, and image it needs).
+// The taste profile card joins this page with the pass 2 chatbot. The open tab lives in
+// the URL (?tab=want).
 export function MePage() {
   const [params, setParams] = useSearchParams();
   const tab: CollectionStatus = params.get("tab") === "want" ? "want" : "own";
-  const collection = useCollection();
+  const { items: collection, ready, signedIn } = useCollectionView();
   const shown = collection.filter((item) => item.status === tab);
   const count = (status: CollectionStatus) => collection.filter((item) => item.status === status).length;
 
@@ -36,9 +39,12 @@ export function MePage() {
           Own <em className="font-normal text-gold-pale">and want.</em>
         </h1>
         <p className="m-0 max-w-[485px] font-display text-lg leading-[1.45] text-soft sm:text-xl">
-          Saved in this browser, no account needed. Mark bottles from any fragrance page or pairing result.
+          {signedIn
+            ? "Saved to your account. Mark bottles from any fragrance page or pairing result."
+            : "Saved in this browser, no account needed. Mark bottles from any fragrance page or pairing result."}
         </p>
       </section>
+      {signedIn && <PendingImport />}
       <div className="border-b border-line-strong pb-1">
         <TextTabs
           label="Collection"
@@ -49,7 +55,9 @@ export function MePage() {
         />
       </div>
       <div id={PANEL_ID} role="tabpanel" aria-labelledby={`tab-${tab}`} className="pt-10 pb-20">
-        {shown.length === 0 ? (
+        {!ready ? (
+          <Notice role="status">Loading your collection…</Notice>
+        ) : shown.length === 0 ? (
           <EmptyState status={tab} />
         ) : (
           <ul className="m-0 grid list-none grid-cols-2 gap-x-4 gap-y-12 p-0 sm:grid-cols-3 sm:gap-x-6 md:grid-cols-4 md:gap-x-8">
@@ -60,6 +68,19 @@ export function MePage() {
         )}
       </div>
     </>
+  );
+}
+
+// A signed-in visitor who chose "Not now" (or signed in elsewhere) still has bottles in
+// this browser's guest list. Offer the import here until they take it or hide it.
+function PendingImport() {
+  const count = useGuestCollection().length;
+  const [hidden, setHidden] = useState(false);
+  if (count === 0 || hidden) return null;
+  return (
+    <div className="mb-12">
+      <ImportOffer count={count} onDone={(imported) => !imported && setHidden(true)} />
+    </div>
   );
 }
 

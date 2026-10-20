@@ -132,13 +132,26 @@ function notify(): void {
 // Mark a fragrance Own or Want, or pass null to remove it. A bottle is in one list at a
 // time, like the pass 2 `collection` table: marking a wanted bottle Own moves it.
 export function setStatus(fragrance: FragranceSnapshot, status: CollectionStatus | null): void {
-  const others = state.collection.filter((item) => item.id !== fragrance.id);
-  if (status === null) {
-    commit({ ...state, collection: others });
-    return;
-  }
-  const saved: SavedFragrance = { ...snapshotOf(fragrance), status, addedAt: new Date().toISOString() };
-  commit({ ...state, collection: [saved, ...others] });
+  commit({ ...state, collection: withStatus(state.collection, fragrance, status) });
+}
+
+// The list after one change, newest first. Pure, so the signed-in collection (in
+// collection.ts) applies its optimistic updates with the very same rule.
+export function withStatus(
+  list: SavedFragrance[],
+  fragrance: FragranceSnapshot,
+  status: CollectionStatus | null,
+): SavedFragrance[] {
+  const others = list.filter((item) => item.id !== fragrance.id);
+  if (status === null) return others;
+  return [{ ...snapshotOf(fragrance), status, addedAt: new Date().toISOString() }, ...others];
+}
+
+// After a guest import (SPEC section 6) the bottles live in the account, so the browser
+// copy is emptied. The guest id stays: pass 2's LLM caps still count by it when the
+// visitor signs out. The taste profile stays too, until M9 can import it.
+export function clearCollection(): void {
+  commit({ ...state, collection: [] });
 }
 
 // Copy only the fields we store, so a full API object doesn't end up in localStorage.

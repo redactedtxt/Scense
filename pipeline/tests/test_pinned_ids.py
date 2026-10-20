@@ -4,19 +4,16 @@ A guest's Own and Want lists are stored in their browser as fragrance ids, so a 
 catalogue must keep every existing fragrance's id and give new fragrances new ones.
 """
 
-import uuid
 from pathlib import Path
 
 import pandas as pd
 import psycopg
 import pytest
-from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 import load
 from pipeline_config import load_config, read_pinned_ids
 from profiles import build_note_profiles
 
-MIGRATIONS = Path(__file__).resolve().parents[2] / "db" / "migrations"
 PAIR_COLUMNS = ["base", "partner", "goal", "score", "rank"]
 
 
@@ -43,28 +40,6 @@ def test_load_refuses_a_catalogue_that_drops_a_pinned_fragrance(fragrances, cfg)
     smaller = fragrances[fragrances["slug"] != next(iter(cfg.pinned_ids))]
     with pytest.raises(ValueError, match="pinned fragrances missing"):
         load._check_pinned_ids(smaller, cfg)
-
-
-@pytest.fixture
-def scratch_database(monkeypatch):
-    """A throwaway empty database with the real migrations applied; dropped afterwards."""
-    base = conninfo_to_dict(load.database_url())
-    name = f"scense_ids_{uuid.uuid4().hex[:8]}"
-    try:
-        admin = psycopg.connect(make_conninfo(**{**base, "dbname": "postgres"}), autocommit=True)
-    except psycopg.OperationalError:
-        pytest.skip("no Postgres reachable (start docker compose); this test needs CREATE DATABASE")
-    admin.execute(f'CREATE DATABASE "{name}"')
-    url = make_conninfo(**{**base, "dbname": name})
-    try:
-        with psycopg.connect(url) as conn:
-            for migration in sorted(MIGRATIONS.glob("00[12]_*.sql")):
-                conn.execute(migration.read_text(encoding="utf-8").split("-- Down Migration")[0])
-        monkeypatch.setenv("DATABASE_URL", url)
-        yield url
-    finally:
-        admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-        admin.close()
 
 
 def _ids_by_slug(url: str) -> dict[str, int]:
