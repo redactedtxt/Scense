@@ -4,6 +4,38 @@ import { z } from "zod";
 // into true (any non-empty string is truthy), so spell the two values out.
 const flag = z.enum(["true", "false"]).transform((value) => value === "true");
 
+// The deploy writes every variable into .env, so an unset one can arrive as "" rather
+// than missing. z.coerce.number() would read "" as 0 (a guest cap of 0 would close the
+// chat to every guest), so treat a blank value as "use the default".
+const unsetIfBlank = (value: unknown) => (value === "" ? undefined : value);
+const count = (fallback: number) => z.preprocess(unsetIfBlank, z.coerce.number().int().min(0).default(fallback));
+const price = (fallback: number) => z.preprocess(unsetIfBlank, z.coerce.number().min(0).default(fallback));
+
+// The AI settings (M9) are their own schema so tests and createApp can build the
+// defaults without a database URL or a JWT secret (aiDefaults below).
+const aiSchema = z.object({
+  // Blank means "no key": the chat says the assistant is unavailable and the rest of
+  // the site works as usual. Tests never set it (vitest.config.ts blanks it).
+  ANTHROPIC_API_KEY: z.string().default(""),
+  ANTHROPIC_MODEL: z.string().min(1).default("claude-haiku-5-5"),
+  LLM_MAX_TOKENS: count(400),
+  // A stuck call should fail fast and show the friendly message, not hang the page.
+  LLM_TIMEOUT_SECONDS: count(20),
+  CHAT_MAX_USER_MESSAGES: count(8),
+  // How many earlier messages (user or assistant, each one a turn) go back to the model.
+  CHAT_HISTORY_TURNS: count(8),
+  CHAT_MESSAGE_MAX_CHARS: count(500),
+  CHAT_REPLY_MAX_WORDS: count(120),
+  CHAT_RETENTION_DAYS: count(7),
+  GUEST_DAILY_CONVERSATION_CAP: count(100),
+  // US dollars per million tokens, for the admin report's cost estimate only.
+  // claude-haiku-5-5 list prices on 2026-10-21 (prompts up to 100K tokens).
+  LLM_INPUT_USD_PER_MTOK: price(0.1),
+  LLM_OUTPUT_USD_PER_MTOK: price(0.5),
+  // Blank turns GET /api/admin/usage off entirely.
+  ADMIN_TOKEN: z.string().default(""),
+});
+
 // Validate env once at startup so a missing variable fails loudly, not mid-request.
 // Every tunable number of the auth layer lives here with its default, so changing one
 // is an environment edit, not a code change (SPEC section 14).
@@ -42,10 +74,10 @@ const schema = z.object({
   PAIR_RATING_LIMIT_WINDOW_MINUTES: z.coerce.number().positive().default(60),
 });
 
-export type Config = z.infer<typeof schema>;
+export type Config = z.infer<typeof schema> & z.infer<typeof aiSchema>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  return schema.parse(env);
+  return { ...schema.parse(env), ...aiSchema.parse(env) };
 }
 
 export type Limit = { max: number; windowMs: number };
@@ -65,6 +97,45 @@ export type AuthSettings = {
 };
 
 const MINUTE_MS = 60_000;
+
+// The slice of the config the chat, the caps, and the admin report need.
+export type AiSettings = {
+  apiKey: string;
+  model: string;
+  maxTokens: number;
+  timeoutMs: number;
+  maxUserMessages: number;
+  historyTurns: number;
+  messageMaxChars: number;
+  replyMaxWords: number;
+  retentionDays: number;
+  guestDailyConversationCap: number;
+  inputUsdPerMTok: number;
+  outputUsdPerMTok: number;
+  adminToken: string;
+};
+
+export function aiDefaults(): AiSettings {
+  return aiSettings(aiSchema.parse({}));
+}
+
+export function aiSettings(config: z.infer<typeof aiSchema>): AiSettings {
+  return {
+    apiKey: config.ANTHROPIC_API_KEY.trim(),
+    model: config.ANTHROPIC_MODEL,
+    maxTokens: config.LLM_MAX_TOKENS,
+    timeoutMs: config.LLM_TIMEOUT_SECONDS * 1000,
+    maxUserMessages: config.CHAT_MAX_USER_MESSAGES,
+    historyTurns: config.CHAT_HISTORY_TURNS,
+    messageMaxChars: config.CHAT_MESSAGE_MAX_CHARS,
+    replyMaxWords: config.CHAT_REPLY_MAX_WORDS,
+    retentionDays: config.CHAT_RETENTION_DAYS,
+    guestDailyConversationCap: config.GUEST_DAILY_CONVERSATION_CAP,
+    inputUsdPerMTok: config.LLM_INPUT_USD_PER_MTOK,
+    outputUsdPerMTok: config.LLM_OUTPUT_USD_PER_MTOK,
+    adminToken: config.ADMIN_TOKEN.trim(),
+  };
+}
 
 export function authSettings(config: Config): AuthSettings {
   return {

@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } fr
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { ImportOffer } from "../components/ImportOffer";
 import { api, ApiError } from "../lib/api";
-import { useGuestCollection } from "../lib/collection";
+import { useGuestImportable } from "../lib/collection";
 import { safeNext, setSignedIn, useSession } from "../lib/session";
 
 type Mode = "signup" | "login";
@@ -35,12 +35,12 @@ const COPY: Record<Mode, { title: string; kicker: string; heading: ReactNode; in
 
 // /signup and /login (SPEC section 11). One page, two modes: the forms differ by one
 // field and the copy. After success, a visitor with a guest list is offered the import
-// before moving on; everyone else goes straight to ?next= (or home).
+// (and taste profile) before moving on; everyone else goes straight to ?next= (or home).
 export function AuthPage({ mode }: { mode: Mode }) {
   const [params] = useSearchParams();
   const next = safeNext(params.get("next"));
   const navigate = useNavigate();
-  const guestCount = useGuestCollection().length;
+  const guest = useGuestImportable();
   // Read once at success time: the offer only appears if there was something to import.
   const [offerImport, setOfferImport] = useState(false);
   const copy = COPY[mode];
@@ -55,7 +55,7 @@ export function AuthPage({ mode }: { mode: Mode }) {
   }, [user, next, navigate]);
 
   function onSignedIn() {
-    if (guestCount > 0) setOfferImport(true);
+    if (guest.bottles > 0 || guest.hasProfile) setOfferImport(true);
     else navigate(next, { replace: true });
   }
 
@@ -71,7 +71,11 @@ export function AuthPage({ mode }: { mode: Mode }) {
           <p className="m-0 max-w-[485px] font-display text-lg leading-[1.45] text-soft sm:text-xl">{copy.intro}</p>
         </section>
         {offerImport ? (
-          <ImportOffer count={guestCount} onDone={() => navigate(next, { replace: true })} />
+          <ImportOffer
+            bottles={guest.bottles}
+            hasProfile={guest.hasProfile}
+            onDone={() => navigate(next, { replace: true })}
+          />
         ) : (
           <AuthForm mode={mode} next={next} onSubmit={() => (submitted.current = true)} onSignedIn={onSignedIn} />
         )}

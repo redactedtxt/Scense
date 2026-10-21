@@ -4,8 +4,9 @@ import { BottleImage } from "../components/BottleImage";
 import { CollectionButtons } from "../components/CollectionButtons";
 import { ImportOffer } from "../components/ImportOffer";
 import { ArrowIcon } from "../components/Icons";
+import { TasteProfileCard } from "../components/TasteProfileCard";
 import { Notice, Tag, TextTabs } from "../components/ui";
-import { useCollectionView, useGuestCollection } from "../lib/collection";
+import { useCollectionView, useGuestImportable } from "../lib/collection";
 import type { CollectionStatus, SavedFragrance } from "../lib/guestStore";
 
 const PANEL_ID = "collection-panel";
@@ -16,8 +17,8 @@ const EMPTY_MESSAGES: Record<CollectionStatus, string> = {
 
 // "/me": the Own and Want lists, from the browser for a guest or the account once signed
 // in (lib/collection.ts decides; each entry carries the name, brand, and image it needs).
-// The taste profile card joins this page with the pass 2 chatbot. The open tab lives in
-// the URL (?tab=want).
+// The taste profile card (M9) sits beside the heading. The open tab lives in the URL
+// (?tab=want).
 export function MePage() {
   const [params, setParams] = useSearchParams();
   const tab: CollectionStatus = params.get("tab") === "want" ? "want" : "own";
@@ -33,17 +34,20 @@ export function MePage() {
   return (
     <>
       <title>Collection · Scense</title>
-      <section className="pt-[58px] pb-10 sm:pt-[72px] sm:pb-12">
-        <p className="kicker">Your collection</p>
-        <h1 className="mt-4 mb-5 font-display text-[54px] leading-[0.88] font-medium tracking-display sm:text-[clamp(54px,6.2vw,88px)]">
-          Own <em className="font-normal text-gold-pale">and want.</em>
-        </h1>
-        <p className="m-0 max-w-[485px] font-display text-lg leading-[1.45] text-soft sm:text-xl">
-          {signedIn
-            ? "Saved to your account. Mark bottles from any fragrance page or pairing result."
-            : "Saved in this browser, no account needed. Mark bottles from any fragrance page or pairing result."}
-        </p>
-      </section>
+      <div className="grid gap-10 pt-[58px] pb-10 sm:pt-[72px] sm:pb-12 md:grid-cols-[minmax(0,1fr)_minmax(280px,380px)] md:items-start md:gap-[4vw]">
+        <section>
+          <p className="kicker">Your collection</p>
+          <h1 className="mt-4 mb-5 font-display text-[54px] leading-[0.88] font-medium tracking-display sm:text-[clamp(54px,6.2vw,88px)]">
+            Own <em className="font-normal text-gold-pale">and want.</em>
+          </h1>
+          <p className="m-0 max-w-[485px] font-display text-lg leading-[1.45] text-soft sm:text-xl">
+            {signedIn
+              ? "Saved to your account. Mark bottles from any fragrance page or pairing result."
+              : "Saved in this browser, no account needed. Mark bottles from any fragrance page or pairing result."}
+          </p>
+        </section>
+        <TasteProfileCard showChatLink />
+      </div>
       {signedIn && <PendingImport />}
       <div className="border-b border-line-strong pb-1">
         <TextTabs
@@ -71,15 +75,16 @@ export function MePage() {
   );
 }
 
-// A signed-in visitor who chose "Not now" (or signed in elsewhere) still has bottles in
-// this browser's guest list. Offer the import here until they take it or hide it.
+// A signed-in visitor who chose "Not now" (or signed in elsewhere) still has bottles or a
+// taste profile in this browser's guest store. Offer the import here until they take it
+// or hide it.
 function PendingImport() {
-  const count = useGuestCollection().length;
+  const { bottles, hasProfile } = useGuestImportable();
   const [hidden, setHidden] = useState(false);
-  if (count === 0 || hidden) return null;
+  if ((bottles === 0 && !hasProfile) || hidden) return null;
   return (
     <div className="mb-12">
-      <ImportOffer count={count} onDone={(imported) => !imported && setHidden(true)} />
+      <ImportOffer bottles={bottles} hasProfile={hasProfile} onDone={(imported) => !imported && setHidden(true)} />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
-import { createApp } from "../app.js";
-import { authSettings, loadConfig } from "../config.js";
+import { createApp, type AiDeps } from "../app.js";
+import { aiDefaults, authSettings, loadConfig } from "../config.js";
+import type { Llm, LlmRequest, LlmResponse } from "../services/llm.js";
 import { loadCatalogueSettings } from "../services/catalogue.js";
 import { loadMatrices } from "../services/scoring.js";
 
@@ -34,9 +35,44 @@ export function fakeDb(routes: Route[]) {
   return { db, calls };
 }
 
-export function appWith(routes: Route[], now?: () => number) {
+export function appWith(routes: Route[], now?: () => number, ai?: AiDeps) {
   const { db, calls } = fakeDb(routes);
-  return { app: createApp(db as never, matrices, settings, auth, now), calls };
+  return { app: createApp(db as never, matrices, settings, auth, now, ai), calls };
+}
+
+// The stand-in for Anthropic (SPEC section 14: no test ever calls the real API). Each
+// call takes the next scripted answer; an Error in the script is thrown instead, the way
+// llm.ts throws LlmUnavailableError. Every request is kept so tests can read the prompt.
+export function fakeLlm(script: (Partial<LlmResponse> | Error)[]) {
+  const requests: LlmRequest[] = [];
+  const llm: Llm = {
+    async complete(request) {
+      requests.push(request);
+      const next = script.shift();
+      if (next === undefined) throw new Error("fakeLlm: no scripted answer left");
+      if (next instanceof Error) throw next;
+      return { text: "", stopReason: "end_turn", inputTokens: 100, outputTokens: 50, ...next };
+    },
+  };
+  return { llm, requests };
+}
+
+// A model answer in the SPEC section 8 shape, as the text the API would send back.
+export function modelJson(overrides: Record<string, unknown> = {}): Partial<LlmResponse> {
+  return {
+    text: JSON.stringify({
+      reply: "That sounds like warm Woody Amber with a spicy edge. Do you enjoy sweet notes too?",
+      profile_update: { families: { "Woody Amber": 1 }, facets: { spicy: 0.5 } },
+      summary: "You lean toward warm spicy scents.",
+      ready_to_recommend: false,
+      ...overrides,
+    }),
+  };
+}
+
+// AI settings with test-friendly defaults; pass overrides for the number under test.
+export function aiWith(llm: Llm | null, overrides: Partial<AiDeps["settings"]> = {}): AiDeps {
+  return { settings: { ...aiDefaults(), adminToken: "test-admin-token-0123456789", ...overrides }, llm };
 }
 
 // A 14-value family profile with all its weight on one ring position.
