@@ -5,7 +5,9 @@ import type { Db } from "../db.js";
 import { requireUser, userIdOf } from "../middleware/auth.js";
 import { ApiError } from "../middleware/errors.js";
 import { parseInput } from "../middleware/validate.js";
+import { importProfile } from "../services/profileStore.js";
 import { dominantFamilyId } from "../services/sql.js";
+import { completeProfile, profileInput } from "../services/taste.js";
 
 // A signed-in user's Own and Want lists (SPEC section 7; moved from M8 into M7, see
 // DECISIONS B31). Each fragrance is in at most one list, like the guest store: the
@@ -28,6 +30,9 @@ const importBody = z.object({
       }),
     )
     .max(MAX_IMPORT),
+  // The guest's taste profile from the chatbot (M9). It only fills an empty account
+  // profile; an account that already has one keeps it.
+  tasteProfile: profileInput.nullable().optional(),
 });
 
 // The same fields the guest store keeps per bottle, so /me draws both from one shape.
@@ -67,7 +72,10 @@ export function collectionRouter(db: Db, settings: AuthSettings): Router {
   router.post("/collection/import", async (req, res) => {
     const body = parseInput(importBody, req.body);
     const imported = await importItems(db, userIdOf(res), body.items);
-    res.json({ imported, skipped: body.items.length - imported });
+    const tasteProfile = body.tasteProfile
+      ? await importProfile(db, userIdOf(res), completeProfile(body.tasteProfile))
+      : "none";
+    res.json({ imported, skipped: body.items.length - imported, tasteProfile });
   });
 
   router.get("/collection/:fragranceId", async (req, res) => {

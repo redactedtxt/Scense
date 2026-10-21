@@ -2,7 +2,7 @@ import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-quer
 import { useMemo, useSyncExternalStore } from "react";
 import { api, ApiError, type ImportItem } from "./api";
 import {
-  clearCollection,
+  clearImported,
   getState,
   isStorageBlocked,
   setStatus,
@@ -12,7 +12,8 @@ import {
   type FragranceSnapshot,
   type SavedFragrance,
 } from "./guestStore";
-import { ACCOUNT_COLLECTION_KEY, SESSION_KEY, useSession } from "./session";
+import { ACCOUNT_COLLECTION_KEY, ACCOUNT_TASTE_KEY, SESSION_KEY, useSession } from "./session";
+import { isBlank } from "./tasteProfile";
 
 // React's view of the visitor's Own and Want lists, and the one place that decides
 // where they live: the browser (guestStore) for a guest, the account (the collection
@@ -112,18 +113,29 @@ async function saveToAccount(client: QueryClient, fragrance: FragranceSnapshot, 
   }
 }
 
-// Guest import (SPEC section 6): send the browser's list to the account, then empty the
-// browser's copy. Bottles already in the account keep the account's status (the server
-// decides). The taste profile is not imported yet; M9 adds it.
+// What the guest has to offer the account: bottles, and a taste profile with any
+// non-zero weight in it (an all-zero one has nothing worth importing).
+export function useGuestImportable(): { bottles: number; hasProfile: boolean } {
+  const state = useSyncExternalStore(subscribe, getState);
+  return { bottles: state.collection.length, hasProfile: !isBlank(state.tasteProfile) };
+}
+
+// Guest import (SPEC section 6): send the browser's list and taste profile to the
+// account, then empty the browser's copy. Bottles already in the account keep the
+// account's status, and an account that already has a taste profile keeps it (the
+// server decides both).
 export async function importGuestCollection(client: QueryClient) {
-  const items: ImportItem[] = getState().collection.map((item) => ({
+  const state = getState();
+  const items: ImportItem[] = state.collection.map((item) => ({
     fragranceId: item.id,
     status: item.status,
     addedAt: validTime(item.addedAt),
   }));
-  const result = await api.importCollection(items);
-  clearCollection();
+  const profile = isBlank(state.tasteProfile) ? null : state.tasteProfile;
+  const result = await api.importCollection(items, profile);
+  clearImported();
   await client.invalidateQueries({ queryKey: ACCOUNT_COLLECTION_KEY });
+  await client.invalidateQueries({ queryKey: ACCOUNT_TASTE_KEY });
   return result;
 }
 

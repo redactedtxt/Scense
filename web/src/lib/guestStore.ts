@@ -1,6 +1,10 @@
 // Guest mode (SPEC section 6): the visitor's id, Own and Want lists, and taste profile,
 // kept in localStorage so they survive a reload. There is no account behind any of it.
 //
+import { normalizeProfile, type TasteProfile } from "./tasteProfile";
+
+export type { TasteProfile };
+
 // localStorage can throw at any time: some browsers block it outright (privacy settings,
 // some private windows), and a full disk makes writes fail. Every read and write below
 // is wrapped in try/catch. When storage fails, the store keeps working in memory for
@@ -22,13 +26,6 @@ export type SavedFragrance = {
 };
 
 export type FragranceSnapshot = Omit<SavedFragrance, "status" | "addedAt">;
-
-// Filled by the pass 2 chatbot. Kept here now so the stored shape is settled.
-export type TasteProfile = {
-  families: Record<string, number>;
-  facets: Record<string, number>;
-  summary: string | null;
-};
 
 export type GuestState = {
   guestId: string;
@@ -74,7 +71,8 @@ function parseState(text: string): GuestState | null {
   }
   if (!isObject(raw) || typeof raw.guestId !== "string" || raw.guestId === "") return null;
   const collection = Array.isArray(raw.collection) ? raw.collection.filter(isSavedFragrance) : [];
-  const tasteProfile = isObject(raw.tasteProfile) ? (raw.tasteProfile as TasteProfile) : null;
+  // Cleaned the same way as a fresh one: known keys only, weights clamped to -1..1.
+  const tasteProfile = normalizeProfile(raw.tasteProfile);
   return { guestId: raw.guestId, collection, tasteProfile };
 }
 
@@ -147,11 +145,17 @@ export function withStatus(
   return [{ ...snapshotOf(fragrance), status, addedAt: new Date().toISOString() }, ...others];
 }
 
-// After a guest import (SPEC section 6) the bottles live in the account, so the browser
-// copy is emptied. The guest id stays: pass 2's LLM caps still count by it when the
-// visitor signs out. The taste profile stays too, until M9 can import it.
-export function clearCollection(): void {
-  commit({ ...state, collection: [] });
+// The chatbot's profile for a guest (M9): saved after each chat reply and by the card's
+// Edit mode. null removes it.
+export function setTasteProfile(profile: TasteProfile | null): void {
+  commit({ ...state, tasteProfile: profile === null ? null : normalizeProfile(profile) });
+}
+
+// After a guest import (SPEC section 6) the bottles and taste profile live in the
+// account, so the browser copy is emptied. The guest id stays: the LLM caps still count
+// by it when the visitor signs out.
+export function clearImported(): void {
+  commit({ ...state, collection: [], tasteProfile: null });
 }
 
 // Copy only the fields we store, so a full API object doesn't end up in localStorage.

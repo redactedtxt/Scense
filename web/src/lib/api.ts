@@ -2,6 +2,7 @@
 // API sends (camelCase); stored values stay as the dataset has them ("male", "autumn").
 
 import { getState, type CollectionStatus, type SavedFragrance } from "./guestStore";
+import type { TasteProfile } from "./tasteProfile";
 
 export type Goal = "enhance" | "soften";
 export type Gender = "male" | "female" | "unisex";
@@ -111,6 +112,38 @@ export type PairRating = { partnerId: number; stars: number };
 
 export type ImportItem = { fragranceId: number; status: CollectionStatus; addedAt?: string };
 
+export type ImportResult = { imported: number; skipped: number; tasteProfile: "imported" | "kept" | "none" };
+
+// A bottle the server picked for the chat (M9). The model never names one.
+export type ChatRecommendation = {
+  id: number;
+  slug: string;
+  name: string;
+  brand: string;
+  imageUrl: string | null;
+  dominantFamily: string;
+  owned: boolean;
+  match?: number; // 0-100; only on a fresh reply, not on a reloaded transcript
+};
+
+export type ChatMessage = { role: "user" | "assistant"; content: string; recommendations: ChatRecommendation[] };
+
+export type ChatState = {
+  available: boolean; // false when the server has no model configured
+  messagesUsed: number;
+  messagesLimit: number;
+  messages: ChatMessage[];
+};
+
+export type ChatReply = {
+  reply: string;
+  profile: TasteProfile;
+  recommendations: ChatRecommendation[];
+  degraded: boolean; // the model's answer failed validation; the reply is an apology
+  messagesUsed: number;
+  messagesLimit: number;
+};
+
 // Carries the API's error code so pages can tell "not found" from "server down".
 export class ApiError extends Error {
   constructor(
@@ -202,10 +235,11 @@ export const api = {
 
   removeFromCollection: (fragranceId: number) => request<void>(`/collection/${fragranceId}`, { method: "DELETE" }),
 
-  importCollection: (items: ImportItem[]) =>
-    request<{ imported: number; skipped: number }>("/collection/import", {
+  // The guest's taste profile rides along (M9); the account keeps its own if it has one.
+  importCollection: (items: ImportItem[], tasteProfile: TasteProfile | null) =>
+    request<ImportResult>("/collection/import", {
       method: "POST",
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({ items, tasteProfile }),
     }),
 
   // --- reviews and pair ratings (pass 2, M8) ---
@@ -226,4 +260,17 @@ export const api = {
 
   ratePair: (body: { baseId: number; partnerId: number; goal: Goal; stars: number }) =>
     request<unknown>("/pair-ratings", { method: "PUT", body: JSON.stringify(body) }),
+
+  // --- chat and taste profile (pass 2, M9) ---
+  chat: () => request<ChatState>("/chat"),
+
+  // A guest sends their profile (numbers only matter; the server never shows the model
+  // the summary) and owned ids; a signed-in user's come from the account.
+  sendChat: (body: { message: string; tasteProfile?: TasteProfile | null; owned?: number[] }) =>
+    request<ChatReply>("/chat", { method: "POST", body: JSON.stringify(body) }),
+
+  tasteProfile: () => request<{ profile: TasteProfile | null }>("/profile/taste"),
+
+  saveTasteProfile: (profile: TasteProfile) =>
+    request<{ profile: TasteProfile }>("/profile/taste", { method: "PUT", body: JSON.stringify(profile) }),
 };

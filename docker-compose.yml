@@ -33,6 +33,11 @@ services:
       # The dev server is plain HTTP (and may be opened by LAN address), so the session
       # cookie can't be Secure here. Production keeps the default, true.
       COOKIE_SECURE: "false"
+      # M9: read from the repo-root .env, which git ignores. Blank means the chat says
+      # "unavailable" and the admin report is off; everything else still runs.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      GUEST_DAILY_CONVERSATION_CAP: ${GUEST_DAILY_CONVERSATION_CAP:-100}
       # Same reason as web below: `tsx watch` uses chokidar, which reads this and polls.
       CHOKIDAR_USEPOLLING: "true"
     ports:

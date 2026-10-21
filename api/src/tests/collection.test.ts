@@ -71,7 +71,7 @@ describe("the collection API", () => {
         { fragranceId: 5, status: "own", addedAt: "2026-10-01T10:00:00.000Z" },
         { fragranceId: 99999, status: "want" },
       ] });
-    expect(res.body).toEqual({ imported: 1, skipped: 1 });
+    expect(res.body).toEqual({ imported: 1, skipped: 1, tasteProfile: "none" });
     expect(calls[0]!.params).toEqual([7, [5, 99999], ["own", "want"], ["2026-10-01T10:00:00.000Z", null]]);
   });
 

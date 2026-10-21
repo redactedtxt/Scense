@@ -6,6 +6,10 @@ import { api, type User } from "./api";
 
 export const SESSION_KEY = ["session"] as const;
 export const ACCOUNT_COLLECTION_KEY = ["account-collection"] as const;
+export const ACCOUNT_TASTE_KEY = ["account-taste-profile"] as const;
+// Today's chat. The key changes with the visitor, so signing in or out never shows the
+// other subject's conversation.
+export const chatKey = (userId: number | null) => ["chat", userId ?? "guest"] as const;
 
 // Any failure counts as signed out: a 401 is the normal answer for a guest, and if the
 // API is down the site should still work in guest mode rather than show an error.
@@ -35,6 +39,8 @@ export function useSignOut() {
     await api.logout().catch(() => {}); // the cookie may already be gone; sign out locally anyway
     client.setQueryData(SESSION_KEY, null);
     client.removeQueries({ queryKey: ACCOUNT_COLLECTION_KEY });
+    client.removeQueries({ queryKey: ACCOUNT_TASTE_KEY });
+    client.removeQueries({ queryKey: ["chat"] });
   };
 }
 

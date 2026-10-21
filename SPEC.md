@@ -54,7 +54,7 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 ├── .github/workflows/
 │   ├── ci.yml
 │   └── deploy.yml
-├── db/migrations/                # 001_init.sql, 002_search_aliases.sql, 003_accounts.sql, 004_reviews.sql
+├── db/migrations/                # 001_init.sql, 002_search_aliases.sql, 003_accounts.sql, 004_reviews.sql, 005_chat.sql
 ├── pipeline/
 │   ├── raw/                      # Kaggle files, gitignored
 │   ├── config/
@@ -80,8 +80,8 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 │   ├── index.ts
 │   ├── db.ts
 │   ├── config.ts
-│   ├── routes/                   # fragrances, notes, pairing, auth, collection, chat, concierge, reviews, ratings, profile
-│   ├── services/                 # scoring.ts (runtime note scoring), llm.ts, caps.ts, recommend.ts
+│   ├── routes/                   # fragrances, notes, pairing, auth, collection, chat, concierge, reviews, ratings, profile, admin
+│   ├── services/                 # scoring.ts (runtime note scoring), llm.ts, caps.ts, recommend.ts, prompt.ts, replyGuard.ts, taste.ts
 │   ├── middleware/               # auth.ts, guest.ts, rateLimit.ts, errors.ts
 │   └── tests/
 └── web/src/
@@ -380,6 +380,22 @@ ALTER TABLE pair_ratings ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT now(
 CREATE INDEX reviews_fragrance_newest_idx ON reviews (fragrance_id, created_at DESC, id DESC);
 ```
 
+Migration `005_chat.sql` (M9; DECISIONS B34): the chat transcript lives on the server, so the model's earlier replies can't be forged by the browser and a reload brings today's chat back.
+
+```sql
+CREATE TABLE chat_messages (
+  conversation_id UUID NOT NULL,          -- llm_usage.conversation_id
+  seq SMALLINT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+  content TEXT NOT NULL,                  -- assistant rows: the reply as shown, after the server's checks
+  recommendations INTEGER[],              -- fragrance ids the server picked
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (conversation_id, seq)
+);
+CREATE INDEX chat_messages_created_idx ON chat_messages (created_at);
+CREATE INDEX llm_usage_day_idx ON llm_usage (day);
+```
+
 ---
 
 ## 6. Guest mode
@@ -422,9 +438,11 @@ All responses JSON. Validate every body and query with Zod. Errors return `{ err
 | GET | `/api/auth/me` | Current user or 401 |
 | GET | `/api/collection` | The signed-in user's whole collection, in the guest store's item shape (M7; DECISIONS B31) |
 | GET/PUT/DELETE | `/api/collection/:fragranceId` | status own or want |
-| POST | `/api/collection/import` | Guest import on sign-in |
+| POST | `/api/collection/import` | Guest import on sign-in: `{ items, tasteProfile? }`. The taste profile only fills an account that has none (M9; DECISIONS B34) |
 | GET/PUT | `/api/profile/taste` | Read and edit the taste profile |
+| GET | `/api/chat` | Today's conversation, `messagesUsed`, `messagesLimit`, and `available` (false without an API key), so a reload restores the chat (M9; DECISIONS B34) |
 | POST | `/api/chat` | See section 8 |
+| GET | `/api/admin/usage?days=` | Section 10. `X-Admin-Token` header; 404 when `ADMIN_TOKEN` is blank |
 | POST | `/api/concierge` | See section 9 |
 | GET/POST/PUT/DELETE | `/api/fragrances/:id/reviews` | One review per user per fragrance: 1 to 5 stars, text up to 2,000 characters, plain text only. GET is public, 10 per page newest first, plus the viewer's own review as `mine`. PUT and DELETE act on the caller's own review. Writes are rate-limited per user (DECISIONS B33) |
 | GET | `/api/pair-ratings?baseId=&goal=` | The user's ratings for one result list, so cards show them on return (M8; DECISIONS B33) |
@@ -456,6 +474,8 @@ Flow per user message:
 4. Merge: new weight = clamp(0.6 × old + 0.4 × update, -1, 1). Save to `taste_profiles` (users) or return it to the client (guests).
 5. When `ready_to_recommend` is true, `recommend.ts` scores every fragrance: cosine similarity between the taste vector (14 families + 6 facets) and the fragrance vector (profile + facets). Return up to 3 owned matches first, then up to 3 non-owned matches that score higher than the best owned match.
 6. The UI shows the reply, the recommendation cards, and the updated taste profile card.
+
+Untrusted input (M9; DECISIONS B34): before a reply or summary is shown, the server caps it at 120 words and replaces it with a reply built from the profile numbers if it names any catalogue fragrance, brand, or brand alias, contains a link, or mentions no family, facet, note, or scent word. A guest's profile reaches the model as numbers only. If the Anthropic call fails, the message is refunded and the chat says the assistant is unavailable; two invalid answers in a row return a friendly apology and count the message.
 
 The disclaimer under the input: "You get one chat per day, up to 8 messages. Recommendations come from our catalogue only."
 

@@ -59,7 +59,7 @@ describe.skipIf(!url)("accounts against Postgres", () => {
         { fragranceId: 4, status: "own", addedAt: "2999-01-01T00:00:00.000Z" }, // future time clamped
       ],
     });
-    expect(res.body).toEqual({ imported: 2, skipped: 3 });
+    expect(res.body).toEqual({ imported: 2, skipped: 3, tasteProfile: "none" });
     const items = (await agent("get", "/api/collection")).body.items as { id: number; status: string; addedAt: string }[];
     const byId = Object.fromEntries(items.map((i) => [i.id, i]));
     expect(byId[2]!.status).toBe("own");
