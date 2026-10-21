@@ -6,6 +6,7 @@ import { ScoreBar, Tag } from "../../components/ui";
 import type { Goal, PairingMatch } from "../../lib/api";
 import { useCollectionStatus } from "../../lib/collection";
 import { padRank } from "../../lib/labels";
+import { PairRating } from "./PairRating";
 
 // Result rows from the Figma export (.match-card, .note-match-row) at its three widths:
 // phone (to 640px), tablet (641 to 900px), desktop (901px up). Skeleton rows reuse the
@@ -44,7 +45,16 @@ function RankNumber({ rank }: { rank: number }) {
   );
 }
 
-export function MatchCard({ match, goal, lazy }: { match: PairingMatch; goal: Goal; lazy: boolean }) {
+type MatchCardProps = {
+  match: PairingMatch;
+  goal: Goal;
+  lazy: boolean;
+  // The base bottle, for the pair rating. Undefined only for a moment while it loads.
+  baseId: number | undefined;
+  baseName: string;
+};
+
+export function MatchCard({ match, goal, lazy, baseId, baseName }: MatchCardProps) {
   const href = `/f/${match.slug}`;
   // The badge reads the guest store, not the API's `owned` flag, so it appears the
   // moment Own is pressed instead of after the list refetches.
@@ -70,6 +80,7 @@ export function MatchCard({ match, goal, lazy }: { match: PairingMatch; goal: Go
       </div>
       <div className={SCORE_CELL}>
         <ScoreBar score={match.score} caption={goalCaption(goal)} />
+        <PairRating baseId={baseId} baseName={baseName} partnerId={match.id} partnerName={match.name} goal={goal} />
       </div>
       {/* Same destination as the name link, so it is skipped by Tab and screen readers. */}
       <Link
@@ -97,6 +108,7 @@ export function MatchCardSkeleton() {
       </div>
       <div className={SCORE_CELL}>
         <div className="skeleton h-[52px] w-full" />
+        <div className="skeleton mt-3 h-[34px] w-[120px]" />
       </div>
     </div>
   );

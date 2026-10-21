@@ -86,6 +86,29 @@ export type Family = { id: number; name: string; harshness: number };
 
 export type User = { id: number; email: string; displayName: string };
 
+export type Review = {
+  id: number;
+  stars: number;
+  body: string; // plain text as typed; always rendered as text, never as HTML
+  authorName: string;
+  createdAt: string;
+  updatedAt: string;
+  mine: boolean;
+};
+
+export type ReviewPage = {
+  items: Review[];
+  mine: Review | null; // the viewer's own review, wherever it sits in the list
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
+export type ReviewInput = { stars: number; body: string };
+
+export type PairRating = { partnerId: number; stars: number };
+
 export type ImportItem = { fragranceId: number; status: CollectionStatus; addedAt?: string };
 
 // Carries the API's error code so pages can tell "not found" from "server down".
@@ -184,4 +207,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ items }),
     }),
+
+  // --- reviews and pair ratings (pass 2, M8) ---
+  reviews: (fragranceId: number, page: number) =>
+    request<ReviewPage>(`/fragrances/${fragranceId}/reviews${query({ page })}`),
+
+  // POST creates the user's one review of this fragrance; PUT edits it.
+  saveReview: (fragranceId: number, input: ReviewInput, isEdit: boolean) =>
+    request<Review>(`/fragrances/${fragranceId}/reviews`, {
+      method: isEdit ? "PUT" : "POST",
+      body: JSON.stringify(input),
+    }),
+
+  deleteReview: (fragranceId: number) => request<void>(`/fragrances/${fragranceId}/reviews`, { method: "DELETE" }),
+
+  pairRatings: (baseId: number, goal: Goal) =>
+    request<{ items: PairRating[] }>(`/pair-ratings${query({ baseId, goal })}`),
+
+  ratePair: (body: { baseId: number; partnerId: number; goal: Goal; stars: number }) =>
+    request<unknown>("/pair-ratings", { method: "PUT", body: JSON.stringify(body) }),
 };

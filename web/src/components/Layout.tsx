@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, ScrollRestoration, useLocation } from "react-router";
 import { useStorageBlocked } from "../lib/collection";
-import { useSession, useSignOut } from "../lib/session";
+import { loginHref, useSession, useSignOut } from "../lib/session";
 import { Logo } from "./Logo";
 
 // Only pages that exist get a link. Chat and Concierge join this list when they land.
@@ -108,11 +108,8 @@ function AccountControl({ onNavigate }: { onNavigate?: () => void }) {
   const linkStyle =
     "border-b border-gold-line py-[5px] text-[11px] font-medium tracking-[0.11em] text-muted uppercase transition-colors duration-[180ms] hover:text-text-bright";
   if (!user) {
-    const here = location.pathname + location.search;
-    const onAuthPage = location.pathname === "/login" || location.pathname === "/signup";
-    const href = here === "/" || onAuthPage ? "/login" : `/login?next=${encodeURIComponent(here)}`;
     return (
-      <Link to={href} onClick={onNavigate} className={linkStyle}>
+      <Link to={loginHref(location.pathname + location.search)} onClick={onNavigate} className={linkStyle}>
         Sign in
       </Link>
     );

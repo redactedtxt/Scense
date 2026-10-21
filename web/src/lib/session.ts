@@ -45,3 +45,11 @@ export function useSignOut() {
 export function safeNext(next: string | null): string {
   return next && /^\/(?![/\\])/.test(next) ? next : "/";
 }
+
+// The sign-in link for a page: /login?next=<that page>, so signing in comes back to it.
+// Home, and the sign-in pages themselves, need no ?next=.
+export function loginHref(here: string): string {
+  const path = here.split("?")[0];
+  if (here === "/" || path === "/login" || path === "/signup") return "/login";
+  return `/login?next=${encodeURIComponent(here)}`;
+}

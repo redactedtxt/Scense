@@ -1,4 +1,4 @@
-import type { Request, RequestHandler } from "express";
+import type { Request, RequestHandler, Response } from "express";
 import type { Limit } from "../config.js";
 import { ApiError } from "./errors.js";
 
@@ -41,9 +41,9 @@ export type Limiter = ReturnType<typeof createLimiter>;
 
 // Express middleware: one attempt per request, keyed by `keyOf`. Over the limit it
 // answers 429 with a Retry-After header and never reaches the route.
-export function rateLimit(limiter: Limiter, keyOf: (req: Request) => string): RequestHandler {
+export function rateLimit(limiter: Limiter, keyOf: (req: Request, res: Response) => string): RequestHandler {
   return (req, res, next) => {
-    const waitSeconds = limiter.hit(keyOf(req));
+    const waitSeconds = limiter.hit(keyOf(req, res));
     if (waitSeconds === 0) return next();
     res.setHeader("Retry-After", String(waitSeconds));
     const minutes = Math.ceil(waitSeconds / 60);
@@ -62,3 +62,8 @@ export function byIpAndEmail(req: Request): string {
   const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
   return `${byIp(req)}|${email}`;
 }
+
+// Account writes (reviews, pair ratings) count per user, not per address: the limit is
+// about one person's output, and a shared office or phone network address must not
+// lock out everyone behind it. Only valid after requireUser has set the id.
+export const byUser = (_req: Request, res: Response) => `user:${res.locals.userId as number}`;

@@ -54,7 +54,7 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 ├── .github/workflows/
 │   ├── ci.yml
 │   └── deploy.yml
-├── db/migrations/                # 001_init.sql, 002_search_aliases.sql, 003_accounts.sql, ...
+├── db/migrations/                # 001_init.sql, 002_search_aliases.sql, 003_accounts.sql, 004_reviews.sql
 ├── pipeline/
 │   ├── raw/                      # Kaggle files, gitignored
 │   ├── config/
@@ -372,6 +372,14 @@ CREATE TABLE pair_ratings (
 );
 ```
 
+Migration `004_reviews.sql` (M8; DECISIONS B33):
+
+```sql
+ALTER TABLE reviews ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE pair_ratings ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+CREATE INDEX reviews_fragrance_newest_idx ON reviews (fragrance_id, created_at DESC, id DESC);
+```
+
 ---
 
 ## 6. Guest mode
@@ -418,8 +426,9 @@ All responses JSON. Validate every body and query with Zod. Errors return `{ err
 | GET/PUT | `/api/profile/taste` | Read and edit the taste profile |
 | POST | `/api/chat` | See section 8 |
 | POST | `/api/concierge` | See section 9 |
-| GET/POST/PUT/DELETE | `/api/fragrances/:id/reviews` | One review per user per fragrance |
-| PUT | `/api/pair-ratings` | Store only |
+| GET/POST/PUT/DELETE | `/api/fragrances/:id/reviews` | One review per user per fragrance: 1 to 5 stars, text up to 2,000 characters, plain text only. GET is public, 10 per page newest first, plus the viewer's own review as `mine`. PUT and DELETE act on the caller's own review. Writes are rate-limited per user (DECISIONS B33) |
+| GET | `/api/pair-ratings?baseId=&goal=` | The user's ratings for one result list, so cards show them on return (M8; DECISIONS B33) |
+| PUT | `/api/pair-ratings` | Store only. `{ baseId, partnerId, goal, stars }`; rating again replaces the rating. Rate-limited per user |
 
 Auth: bcrypt cost 12. JWT signed with `JWT_SECRET`, 7-day expiry, in an httpOnly, Secure, SameSite=Lax cookie. Add `helmet` and a CORS allowlist from `CORS_ORIGIN` (production value: `https://scense.name`). Express trusts exactly one proxy hop (Caddy), so rate limits see the visitor's address (DECISIONS B31).
 

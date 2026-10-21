@@ -12,6 +12,8 @@ import { fragrancesRouter } from "./routes/fragrances.js";
 import { healthRouter } from "./routes/health.js";
 import { notesRouter } from "./routes/notes.js";
 import { pairingRouter } from "./routes/pairing.js";
+import { pairRatingsRouter } from "./routes/pairRatings.js";
+import { reviewsRouter } from "./routes/reviews.js";
 import type { CatalogueSettings } from "./services/catalogue.js";
 import type { Matrices } from "./services/scoring.js";
 
@@ -43,6 +45,8 @@ export function createApp(
   app.use("/api", pairingRouter(db, matrices));
   app.use("/api", authRouter(db, auth, now));
   app.use("/api", collectionRouter(db, auth));
+  app.use("/api", reviewsRouter(db, auth, now));
+  app.use("/api", pairRatingsRouter(db, auth, now));
   app.use("/api", notFoundHandler);
   app.use(errorHandler);
   return app;

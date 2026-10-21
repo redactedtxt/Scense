@@ -2,7 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { getState, setStatus } from "../lib/guestStore";
 import { safeNext } from "../lib/session";
-import { errorResponse, mockApi, renderAt } from "./render";
+import { errorResponse, mockApi, noReviews, renderAt } from "./render";
 
 // Accounts on the web side (M7): the sign-up and log-in pages, the header, the guest
 // import, and the collection switching from the browser to the account once signed in.
@@ -145,6 +145,7 @@ describe("signed in, Own and Want save to the account", () => {
   it("sends PUT and DELETE to the collection API and leaves the browser list alone", async () => {
     const fetchMock = mockApi([
       ["/api/auth/me", () => ({ user: ana })],
+      noReviews,
       ["/api/fragrances/", () => aventus],
       ["/api/collection/5", (_url, init) =>
         init?.method === "DELETE" ? new Response(null, { status: 204 }) : saved(5, "Aventus", "own")],
