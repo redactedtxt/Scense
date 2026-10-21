@@ -8,6 +8,7 @@ import { FamilyTag, Notice } from "../components/ui";
 import { ApiError, type FragranceDetail, type Layer } from "../lib/api";
 import { familyColor, formatCount, genderLabel, percent, SEASON_ORDER, seasonLabel } from "../lib/labels";
 import { useFragrance } from "../lib/queries";
+import { Reviews } from "./fragrance/Reviews";
 import { NotFoundPage } from "./NotFoundPage";
 
 const LAYERS: { key: Layer; label: string }[] = [
@@ -18,7 +19,7 @@ const LAYERS: { key: Layer; label: string }[] = [
 ];
 const STRENGTH_STEPS = 4;
 
-// "/f/:slug": one fragrance. Written reviews arrive in pass 2.
+// "/f/:slug": one fragrance, with written reviews (M8) at the bottom.
 export function FragrancePage() {
   const { slug = "" } = useParams();
   const fragrance = useFragrance(slug);
@@ -49,6 +50,7 @@ export function FragrancePage() {
         {f ? <Summary f={f} /> : <SummarySkeleton />}
       </div>
       {f && <Details f={f} />}
+      {f && <Reviews fragrance={f} />}
     </article>
   );
 }

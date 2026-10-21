@@ -30,6 +30,15 @@ export function requireUser(settings: AuthSettings): RequestHandler {
   };
 }
 
+// For public routes that show a little more to a signed-in visitor (which review is
+// theirs). Never rejects: a missing or bad cookie just means "a guest".
+export function optionalUser(settings: AuthSettings): RequestHandler {
+  return async (req, res, next) => {
+    res.locals.userId = await readSession(req.cookies?.[SESSION_COOKIE], settings.jwtSecret);
+    next();
+  };
+}
+
 export function userIdOf(res: Response): number {
   return res.locals.userId as number;
 }

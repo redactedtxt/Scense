@@ -32,6 +32,14 @@ const schema = z.object({
   LOGIN_LIMIT_WINDOW_MINUTES: z.coerce.number().positive().default(15),
   SIGNUP_LIMIT_MAX: z.coerce.number().int().positive().default(5),
   SIGNUP_LIMIT_WINDOW_MINUTES: z.coerce.number().positive().default(60),
+
+  // Writes per signed-in user (M8). A review write is a POST, PUT, or DELETE; 10 an hour
+  // is plenty for a person and stops a script filling pages with reviews. Pair ratings
+  // are one small upsert each and people click through several cards, so they get more.
+  REVIEW_LIMIT_MAX: z.coerce.number().int().positive().default(10),
+  REVIEW_LIMIT_WINDOW_MINUTES: z.coerce.number().positive().default(60),
+  PAIR_RATING_LIMIT_MAX: z.coerce.number().int().positive().default(120),
+  PAIR_RATING_LIMIT_WINDOW_MINUTES: z.coerce.number().positive().default(60),
 });
 
 export type Config = z.infer<typeof schema>;
@@ -42,7 +50,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
 export type Limit = { max: number; windowMs: number };
 
-// The slice of the config the auth routes and middleware need.
+// The slice of the config the auth routes, the account routes, and their middleware need.
 export type AuthSettings = {
   jwtSecret: string;
   sessionDays: number;
@@ -52,6 +60,8 @@ export type AuthSettings = {
   corsOrigins: string[];
   loginLimit: Limit;
   signupLimit: Limit;
+  reviewLimit: Limit;
+  pairRatingLimit: Limit;
 };
 
 const MINUTE_MS = 60_000;
@@ -66,5 +76,10 @@ export function authSettings(config: Config): AuthSettings {
     corsOrigins: config.CORS_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean),
     loginLimit: { max: config.LOGIN_LIMIT_MAX, windowMs: config.LOGIN_LIMIT_WINDOW_MINUTES * MINUTE_MS },
     signupLimit: { max: config.SIGNUP_LIMIT_MAX, windowMs: config.SIGNUP_LIMIT_WINDOW_MINUTES * MINUTE_MS },
+    reviewLimit: { max: config.REVIEW_LIMIT_MAX, windowMs: config.REVIEW_LIMIT_WINDOW_MINUTES * MINUTE_MS },
+    pairRatingLimit: {
+      max: config.PAIR_RATING_LIMIT_MAX,
+      windowMs: config.PAIR_RATING_LIMIT_WINDOW_MINUTES * MINUTE_MS,
+    },
   };
 }

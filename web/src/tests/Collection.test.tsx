@@ -1,7 +1,7 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { loadGuestState } from "../lib/guestStore";
-import { mockApi, renderAt } from "./render";
+import { mockApi, noReviews, renderAt } from "./render";
 
 const BANNER = "Your browser blocked storage, so your collection won't persist.";
 
@@ -27,7 +27,7 @@ const aventus = {
 };
 
 function fragranceApi() {
-  return mockApi([["/api/fragrances/", () => aventus]]);
+  return mockApi([noReviews, ["/api/fragrances/", () => aventus]]);
 }
 
 afterEach(() => {

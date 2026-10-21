@@ -36,6 +36,14 @@ export function renderAt(path: string) {
   );
 }
 
+// A fragrance page also asks for its reviews (M8). Tests about other parts of the page
+// list this before their "/api/fragrances/" answer so the reviews request gets the
+// right shape.
+export const noReviews: [string, Responder] = [
+  "/api/fragrances/5/reviews",
+  () => ({ items: [], mine: null, page: 1, pageSize: 10, total: 0, totalPages: 0 }),
+];
+
 export function errorResponse(status: number, code: string, message: string) {
   return new Response(JSON.stringify({ error: { code, message } }), { status });
 }

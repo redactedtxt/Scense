@@ -66,7 +66,14 @@ export function FragranceResults({ base, baseSlug, goal }: Props) {
         )}
         {first && first.total > 0 && first.matching === 0 && <Notice>{emptyOwnedMessage(owned.length, goal)}</Notice>}
         {matches.map((match, index) => (
-          <MatchCard key={match.slug} match={match} goal={goal} lazy={index >= EAGER_ROWS} />
+          <MatchCard
+            key={match.slug}
+            match={match}
+            goal={goal}
+            lazy={index >= EAGER_ROWS}
+            baseId={base?.id ?? first?.base.id}
+            baseName={baseName}
+          />
         ))}
       </div>
       {pairing.hasNextPage && (
