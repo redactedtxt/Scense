@@ -118,15 +118,20 @@ type ImportItem = z.infer<typeof importBody>["items"][number];
 // One INSERT for the whole guest list. Rules (DECISIONS B31):
 //  - a bottle already in the account keeps the account's status (ON CONFLICT DO NOTHING);
 //  - an id that is not in the catalogue is skipped (the JOIN drops it);
-//  - a saved time in the future is clamped to now.
+//  - a saved time in the future is clamped to now;
+//  - the same bottle twice in one list: the first entry wins. DISTINCT ON picks it by
+//    its position in the list (ORDINALITY). Without it the winner depended on the order
+//    the JOIN happened to return rows in, which changes with the query plan (M11 found
+//    this when the test catalogue's smaller table got a different plan).
 // Returns how many rows were added.
 async function importItems(db: Db, userId: number, items: ImportItem[]): Promise<number> {
   if (items.length === 0) return 0;
   const { rows } = await db.query(
     `INSERT INTO collection (user_id, fragrance_id, status, added_at)
-     SELECT $1, i.fragrance_id, i.status, LEAST(coalesce(i.added_at, now()), now())
-       FROM unnest($2::int[], $3::text[], $4::timestamptz[]) AS i(fragrance_id, status, added_at)
+     SELECT DISTINCT ON (i.fragrance_id) $1::int, i.fragrance_id, i.status, LEAST(coalesce(i.added_at, now()), now())
+       FROM unnest($2::int[], $3::text[], $4::timestamptz[]) WITH ORDINALITY AS i(fragrance_id, status, added_at, position)
        JOIN fragrances f ON f.id = i.fragrance_id
+      ORDER BY i.fragrance_id, i.position
      ON CONFLICT (user_id, fragrance_id) DO NOTHING
      RETURNING fragrance_id`,
     [userId, items.map((i) => i.fragranceId), items.map((i) => i.status), items.map((i) => i.addedAt ?? null)],

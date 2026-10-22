@@ -31,10 +31,11 @@ export class LlmUnavailableError extends Error {}
 // The subset of the SDK client we use, so tests can pass a stand-in for it.
 export type MessagesClient = Pick<Anthropic, "messages">;
 
-export function createAnthropicClient(apiKey: string, timeoutMs: number): MessagesClient {
+export function createAnthropicClient(apiKey: string, timeoutMs: number, baseUrl = ""): MessagesClient {
   // One automatic retry covers a brief 429 or 529. More would keep the visitor waiting
   // on a call that is unlikely to succeed; the chat already explains the outage.
-  return new Anthropic({ apiKey, timeout: timeoutMs, maxRetries: 1 });
+  // A blank baseUrl means Anthropic; the smoke tests pass their local fake's address.
+  return new Anthropic({ apiKey, timeout: timeoutMs, maxRetries: 1, baseURL: baseUrl || undefined });
 }
 
 export function anthropicLlm(client: MessagesClient, model: string, maxTokens: number): Llm {

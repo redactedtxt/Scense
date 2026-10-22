@@ -80,7 +80,7 @@ export function ChatList({
           ))}
         </ul>
       )}
-      <p className="m-0 shrink-0 border-t border-line px-4 py-3 text-[10px] leading-snug text-ghost">
+      <p className="m-0 shrink-0 border-t border-line px-4 py-3 text-[10px] leading-snug text-dim">
         {words.retention}
       </p>
     </nav>
@@ -137,7 +137,7 @@ function ChatRow({
             onClick={() => setConfirming(true)}
             disabled={busy}
             aria-label={`${words.deleteLabel}: ${chat.title}`}
-            className="h-6 w-6 shrink-0 cursor-pointer text-[16px] leading-none text-faint transition-colors hover:text-text-bright disabled:cursor-default disabled:opacity-40"
+            className="h-6 w-6 shrink-0 cursor-pointer text-[16px] leading-none text-dim transition-colors hover:text-text-bright disabled:cursor-default disabled:opacity-40"
           >
             ×
           </button>

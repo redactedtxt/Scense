@@ -36,7 +36,7 @@ export function OutingCard({ userId, outingId, ownedCount }: { userId: number | 
         {slots.map(({ slot, value }) => (
           <div key={slot} className="contents">
             <dt className="label-caps text-[9px] leading-[22px] font-semibold text-gold-kicker">{SLOT_LABELS[slot]}</dt>
-            <dd className={`m-0 font-display text-lg leading-snug ${value ? "text-text" : "text-faint"}`}>
+            <dd className={`m-0 font-display text-lg leading-snug ${value ? "text-text" : "text-dim"}`}>
               {value ?? <span aria-label="Not known yet">—</span>}
             </dd>
           </div>
@@ -46,7 +46,7 @@ export function OutingCard({ userId, outingId, ownedCount }: { userId: number | 
         {ownedCount > 0 ? (
           <>
             Picks come from the {ownedCount} {ownedCount === 1 ? "bottle" : "bottles"} on your{" "}
-            <Link to="/me" className="text-chip-on-text hover:text-gold-bright">
+            <Link to="/me" className="text-chip-on-text underline underline-offset-2 hover:text-gold-bright">
               Own list
             </Link>
             .
@@ -54,7 +54,7 @@ export function OutingCard({ userId, outingId, ownedCount }: { userId: number | 
         ) : (
           <>
             Your{" "}
-            <Link to="/me" className="text-chip-on-text hover:text-gold-bright">
+            <Link to="/me" className="text-chip-on-text underline underline-offset-2 hover:text-gold-bright">
               Own list
             </Link>{" "}
             is empty, so picks come from the whole catalogue.

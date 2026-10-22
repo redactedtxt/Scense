@@ -208,7 +208,7 @@ describe("pairing page, Fragrance mode", () => {
 
     await userEvent.click(screen.getByRole("checkbox", { name: "Owned only" }));
     const card = (await screen.findByRole("heading", { name: "Deep Cut" })).closest("article")!;
-    expect(within(card).getByLabelText("Rank 150")).toBeInTheDocument(); // the full-list rank
+    expect(within(card).getByText("Rank 150")).toBeInTheDocument(); // the full-list rank
     expect(within(card).getByText("Owned")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Eclaire" })).not.toBeInTheDocument();
     expect(screen.getByText(/Showing the 1 you own\./)).toBeInTheDocument();

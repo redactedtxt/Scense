@@ -33,10 +33,10 @@ export function goalCaption(goal: Goal): string {
 
 function RankNumber({ rank }: { rank: number }) {
   return (
-    <div
-      aria-label={`Rank ${rank}`}
-      className="self-start pt-[5px] font-display text-2xl leading-none text-gold-rank sm:self-center sm:pt-0 md:text-[31px]"
-    >
+    // The rank is read from hidden text, not an aria-label: a plain div has no role, and
+    // screen readers may ignore a label on an element without one.
+    <div className="self-start pt-[5px] font-display text-2xl leading-none text-gold-rank sm:self-center sm:pt-0 md:text-[31px]">
+      <span className="sr-only">{`Rank ${rank}`}</span>
       <span aria-hidden="true" className="mb-[5px] block font-sans text-[7px] font-semibold tracking-[0.16em] text-faint">
         NO.
       </span>

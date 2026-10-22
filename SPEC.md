@@ -40,7 +40,7 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 | Database | PostgreSQL 16 |
 | AI | Anthropic API, model `claude-haiku-5-5`, official `@anthropic-ai/sdk` |
 | Migrations | Plain SQL files in `db/migrations`, run with `node-pg-migrate` |
-| Tests | Vitest + Supertest (API), Vitest + Testing Library (web), pytest (pipeline), Playwright for 3 smoke tests |
+| Tests | Vitest + Supertest (API), Vitest + Testing Library (web), pytest (pipeline), Playwright for 4 smoke tests (`e2e/`) |
 | Infra | Docker, Docker Compose, Caddy (TLS and static files), GitHub Actions, one AWS EC2 instance |
 
 ```
@@ -54,7 +54,7 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 ├── .github/workflows/
 │   ├── ci.yml
 │   └── deploy.yml
-├── db/migrations/                # 001_init.sql, 002_search_aliases.sql, 003_accounts.sql, 004_reviews.sql, 005_chat.sql, 006_chat_named_bottles.sql, 007_multi_chat.sql, 008_concierge.sql
+├── db/migrations/                # 001_init.sql ... 008_concierge.sql, 009_drop_llm_usage_conversation_id.sql
 ├── pipeline/
 │   ├── raw/                      # Kaggle files, gitignored
 │   ├── config/
@@ -76,6 +76,8 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 │   │   ├── precompute.py
 │   │   └── load.py
 │   └── tests/
+├── e2e/                          # Playwright smoke tests and the fake Anthropic they use (M11)
+├── scripts/                      # seed-prod.ps1, build-test-catalogue.ps1, seed/ and test-catalogue/ SQL
 ├── api/src/
 │   ├── index.ts
 │   ├── db.ts
@@ -295,7 +297,6 @@ CREATE TABLE llm_usage (
   subject TEXT NOT NULL,              -- 'user:<id>' or 'guest:<uuid>'
   feature TEXT NOT NULL CHECK (feature IN ('chat','concierge')),
   day DATE NOT NULL,                  -- America/Toronto date
-  conversation_id UUID NOT NULL,
   user_messages SMALLINT NOT NULL DEFAULT 0,
   input_tokens INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
@@ -384,7 +385,7 @@ Migration `005_chat.sql` (M9; DECISIONS B34): the chat transcript lives on the s
 
 ```sql
 CREATE TABLE chat_messages (
-  conversation_id UUID NOT NULL,          -- llm_usage.conversation_id
+  conversation_id UUID NOT NULL,          -- chat_conversations.id (foreign key since 007)
   seq SMALLINT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
   content TEXT NOT NULL,                  -- assistant rows: the reply as shown, after the server's checks
@@ -417,7 +418,7 @@ CREATE INDEX chat_conversations_last_idx ON chat_conversations (last_message_at)
 -- Backfill: every stored transcript becomes a chat owned by its llm_usage subject.
 ALTER TABLE chat_messages ADD CONSTRAINT chat_messages_conversation_fk
   FOREIGN KEY (conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE;
-ALTER TABLE llm_usage ALTER COLUMN conversation_id DROP NOT NULL;  -- unused; dropped later (section 13, M11)
+ALTER TABLE llm_usage ALTER COLUMN conversation_id DROP NOT NULL;  -- unused; dropped in 009
 ```
 
 Migration `008_concierge.sql` (M10; DECISIONS B37): an outing is a conversation, so the concierge reuses the chat tables. `feature` keeps the two apart; every query filters on it.
@@ -430,6 +431,12 @@ DROP INDEX chat_conversations_subject_idx;
 CREATE INDEX chat_conversations_subject_idx ON chat_conversations (subject, feature, last_message_at DESC);
 ALTER TABLE chat_messages ADD COLUMN options TEXT[];            -- concierge: the answer chips under a question
 ALTER TABLE chat_messages ADD COLUMN pick_reasons TEXT[];       -- concierge: one sentence per recommendation
+```
+
+Migration `009_drop_llm_usage_conversation_id.sql` (M11; DECISIONS B39): the contract half of 007's expand-and-contract change. The `001_init.sql` listing above shows `llm_usage` as it is now; the real 001 file still creates the column, and this migration removes it.
+
+```sql
+ALTER TABLE llm_usage DROP COLUMN conversation_id;
 ```
 
 ---
@@ -608,7 +615,7 @@ Header: Scense wordmark, nav, "Sign in" in the top right. Footer on every page: 
 `docker compose up` starts Postgres, the API with hot reload, and Vite. A `Makefile` wraps common commands: `make dev`, `make test`, `make pipeline`, `make tune`, `make migrate`.
 
 ### CI (`ci.yml`, on every pull request and push)
-Lint (ESLint, Ruff), typecheck, run API, web, and pipeline tests, build both Docker images.
+Lint (ESLint, Ruff), typecheck, run API, web, and pipeline tests, build the Docker images. Since M11 the API job and a Playwright job each get a throwaway Postgres service loaded with the test catalogue (`db/test-catalogue.sql.gz`, through `scripts/test-catalogue/load.sh`), so the API integration tests and the smoke tests run in CI (DECISIONS B39).
 
 ### Deploy (`deploy.yml`, on push to `main`)
 1. Build API and web images, push to GitHub Container Registry.
@@ -683,9 +690,9 @@ Stop after each one. Report: what you built, files to read first, commands to ru
 | M9 | Chatbot, taste profile card, caps | Cap enforced at message 9 and at the guest site-wide cap; JSON validation tested with mocked LLM responses |
 | M9.1 | Chat layout and multiple chats | Fixed-height chat panel at desktop and 375px; New chat, chat list, reopen and delete; one shared 8-message budget per day across chats; the guest cap counts guests; tests for the shared budget, the guest count, and the race across two chats pass (DECISIONS B36) |
 | M10 | Concierge | Asks for missing slots; empty-collection fallback works |
-| M11 | Polish | Playwright smoke tests (pair a fragrance, chat once, concierge once); README skeleton with setup steps; Lighthouse accessibility ≥ 90 |
+| M11 | Polish | Playwright smoke tests (pair a fragrance, sign up and save a bottle, chat once, concierge once) with a mocked Anthropic, run in CI against a test catalogue; the API integration tests run in CI too; README for a recruiter; Lighthouse accessibility ≥ 90 on pairing, browse, fragrance, chat, and concierge; migration 009 (DECISIONS B39) |
 
-**TODO (M11):** add a migration that drops `llm_usage.conversation_id`. Migration 007 only made it nullable, so the old API container could keep writing it during the 007 deploy; nothing reads or writes it since (DECISIONS B36). Drop it once 007 has been live through at least one deploy, and remove the column from section 5's `001_init.sql` listing at the same time.
+**Done in M11:** migration `009_drop_llm_usage_conversation_id.sql` drops `llm_usage.conversation_id`. Migration 007 only made it nullable, so the old API container could keep writing it during the 007 deploy; nothing has read or written it since (DECISIONS B36, B39). The column is gone from section 5's `001_init.sql` listing.
 
 ---
 
