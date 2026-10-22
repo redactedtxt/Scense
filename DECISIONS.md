@@ -587,3 +587,40 @@ Real visitors typed "ysl myself" and "jpg" and got nothing. Two layers fix it: a
 - **"outside" is no longer an outdoor word** in the sentence check: "outside the wanted range" is about projection, and flagged good sentences.
 - **occasions.yaml reviewed:** wedding is now Soft Floral 0.8, Floral 0.6, Woods 0.6, Citrus 0.5, Aromatic Fougère 0.4, Floral Amber 0.4, Soft Amber 0.4; formal_event's Mossy Woods 0.7 → 0.5; night_out's Soft Amber 0.4 → 0.6. The CHECK markers are cleared.
 - **Checked:** the API suite with the Postgres integration tests (268 passing, none skipped), pytest, and the page in the browser against the dev stack at 1366 × 800 and 375 × 812 with a seeded test guest (no model calls): the outing list, a finished outing's picks and sentences, a free chip tap (the database showed the count and tokens unchanged), no sideways scroll, and the page height fixed. Migration 008 ran on the dev database; its 4 existing chats became `feature = 'chat'`.
+
+### B39. M11: smoke tests, a test catalogue in CI, accessibility, and the README (2026-10-22)
+- **A small test catalogue, committed.** CI has no Kaggle files and can't run the pipeline, and the full catalogue is 44 MB. `db/test-catalogue.sql.gz` (250 KB) holds 125 bottles: the 100 most voted, ids 1 to 10, and every bottle a test looks up by name (Aventus, Club de Nuit Intense Man, Cool Water, MYSLF, Myrrh & Tonka, the Stronger With You bottles, Hawas, and so on), plus the two most voted of each brand the alias and accent tests search for. Ids and slugs are the real ones. All notes, families, and aliases come along. `scripts/test-catalogue/stage.sql` picks them into a `seed` schema of the same shape as `scripts/seed/stage.sql`, so CI loads it with the production `merge.sql` (`scripts/test-catalogue/load.sh`): the seed path gets exercised on every push.
+  - **Pair lists are cut to the subset, not rescored.** Each list keeps the full catalogue's order, renumbered 1..N, and its scores are rescaled so the best partner is 100 again (the stored score is the display score, B13).
+  - **`\restrict` lines are removed.** pg_dump 16.10 and later wraps a dump in `\restrict`/`\unrestrict`, which older psql clients refuse. They protect against a malicious server's dump; this file is ours and reviewed in git.
+  - **Rebuild** with `scripts/build-test-catalogue.ps1` after a pipeline change the tests should see.
+- **CI now runs the integration tests.** The API job has a `postgres:16` service with the catalogue loaded and sets `TEST_DATABASE_URL`, so the 54 tests that used to skip run there (268 in all). Its password is a CI-only placeholder, not a secret.
+  - **Two bugs surfaced on the first run, both fixed:**
+    - **Guest import with the same bottle twice.** "The first entry wins" had relied on the order the JOIN returned rows, which changes with the query plan. The 125-row table got a different plan from the 1,000-row one, and the second entry won. The import now picks the first entry explicitly (`WITH ORDINALITY` and `DISTINCT ON`).
+    - **A race between test files.** The chat and concierge guest-cap tests both count "distinct guests today" in one database; run in parallel, one file's new guests landed between the other's count and its check. With a test database, Vitest now runs files one at a time (`fileParallelism`), about 43 s instead of 26 s. Without one, files stay parallel.
+- **Smoke tests in `e2e/`** (its own `package.json`, like `api/` and `web/`), Playwright 1.64, Chromium only. Four tests: pair a fragrance and switch the goal; sign up and save a bottle (checked after a reload, so it came from the account); one chat; one outing (a typed message, then a free chip tap, then picks). SPEC listed three; signing up was added at Tejas's request.
+  - **What runs:** the real API (`npm start`) and the production web build (`vite preview`, which proxies `/api` like the dev server) against the test catalogue, on their own ports (API 3100, web 4173), so they never touch the dev stack.
+  - **The model is a local fake** (`e2e/mock-anthropic.mjs`) that answers `POST /v1/messages`, told apart by the JSON schema the API asks for. The real `llm.ts`, caps, reply guard, and pick code all run. New setting `ANTHROPIC_BASE_URL` (blank means Anthropic) points the SDK at it. The API gets a fake key too, so if the base URL were ever ignored, Anthropic would answer 401, and nothing would be billed. The tests read the fake's call counts to prove the chat and the concierge really went through it, and that the chip tap made no slot call.
+  - **CI job `e2e`:** its own Postgres service and catalogue load, then the tests. On failure, the HTML report and traces are uploaded for 7 days.
+- **Lighthouse accessibility** (13.5.0, mobile and desktop, on the production build with the test catalogue). The chat and the concierge were measured holding a real conversation and a finished outing, not empty. Before → after:
+
+  | Page | Before | After |
+  |---|---|---|
+  | Pairing, with results | 93 | 100 |
+  | Pairing, empty | 100 | 100 |
+  | Browse | 100 | 100 |
+  | Fragrance | 93 | 100 |
+  | Chat | 96 | 100 |
+  | Concierge | 93 | 100 |
+
+  The fixes:
+  - **The `dim` text colour went from #77736c (3.8:1 on panels) to #8a857d** (4.7:1 on the bottle frame, 4.9:1 on panels, 5.4:1 on the page; AA is 4.5:1). This is a deliberate step away from the Figma export (decision 36): every summary, tag, and caption is a little brighter.
+  - **Text in `faint` or `ghost` moved to `dim`:** the footer's data credit, the chat list's 30-day note, score captions, inactive tabs, the "Sign in to review" link, and the two × buttons. `ghost` is gone; `faint` is now only for input placeholders and the decorative "NO." above ranks.
+  - **The rank finder's idle line** ("#— of 999") was faded with 25% opacity (1.4:1). It now uses quiet colours instead.
+  - **Rank numbers** were an `aria-label` on a `div` with no role, which screen readers may ignore. They're now hidden text ("Rank 1").
+  - **Links inside sentences** (the fragrance page's About link, the outing card's collection link) are underlined, so colour isn't the only cue.
+  - **The logo link** lost its `aria-label` ("Scense home"), which didn't contain its visible text. Its name is now "Scense".
+  - Not in CI: the scores were measured once by hand, with a throwaway script. **Revisit when** the design changes; Lighthouse CI could hold the line.
+- **Migration 009 drops `llm_usage.conversation_id`**, the contract half of B36's expand-and-contract change. 007 and 008 have each been live through a deploy, and nothing has read or written the column since 007. Dropping a column only marks it dropped, so the lock is brief. SPEC section 5's `001_init.sql` listing no longer shows the column.
+- **"Zero-downtime" is about the schema, not the restart.** Expand-and-contract means old and new code both work against the schema mid-deploy. `docker compose up -d` still recreates the API container, which costs a few seconds of failed requests. The README says "zero-downtime schema changes" for that reason.
+- **README:** written for a 60-second read. The screenshot (`docs/images/pairing.jpg`) is the dev stack with the full catalogue, Club de Nuit Intense Man on Soften. It was taken with Fragrantica's image host (`fimgs.net`) blocked, so it shows the drawn placeholder bottles (B19), not their photos (Tejas's call). The live site only hotlinks the photos; committing a picture of them would put copies of Fragrantica's images into a public repo, which their unconfirmed licence (decision 15, B19) doesn't cover. The architecture diagram is Mermaid, which GitHub draws.
+- **Secret scan before going public** (all 23 commits, every added line, every filename ever added; no scanner was installed, so it was a pattern scan): no keys, tokens, private keys, passwords, or `.env` files. Every committed value is a placeholder, a dev default, or a test fixture. Not secrets, but public once the repo is: the server's IP (in the runbook and `seed-prod.ps1`; DNS already publishes it), the backup bucket's name, and the author email in every commit.

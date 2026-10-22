@@ -40,9 +40,11 @@
   --color-chip-on-text: #ddc49f;
   --color-soft: #969189; /* intro copy */
   --color-muted: #8f8b83; /* nav, chips */
-  --color-dim: #77736c; /* summaries, tags */
-  --color-faint: #64615c; /* placeholders, inactive tabs */
-  --color-ghost: #56534e; /* footer, fine print */
+  /* dim is the faintest colour for text anyone needs to read: 4.7:1 on the bottle frame,
+     4.9:1 on panels, 5.4:1 on the page (WCAG AA asks 4.5:1). It was #77736c (3.8:1) until
+     M11's Lighthouse pass, which also retired "ghost" (#56534e, 2.3:1). */
+  --color-dim: #8a857d; /* summaries, tags, fine print, inactive tabs */
+  --color-faint: #64615c; /* input placeholders and decoration only, never text to read */
 
   /* Gold accents */
   --color-gold-bright: #d3b078; /* scores, emphasis */

@@ -211,7 +211,7 @@ function Profile({ f }: { f: FragranceDetail }) {
         ))}
         <li className="text-[10px] leading-relaxed text-dim">
           Shares of the 14 fragrance-wheel families, built from the accords and their vote strengths.{" "}
-          <Link to="/about" className="text-gold-kicker hover:text-gold-bright">
+          <Link to="/about" className="text-gold-kicker underline underline-offset-2 hover:text-gold-bright">
             How this works
           </Link>
         </li>

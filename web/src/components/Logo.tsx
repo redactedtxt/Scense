@@ -4,7 +4,6 @@ export function Logo({ className = "" }: { className?: string }) {
   return (
     <Link
       to="/"
-      aria-label="Scense home"
       className={`inline-flex w-fit items-center gap-[9px] font-display text-[21px] font-medium tracking-[0.02em] sm:gap-3 sm:text-2xl ${className}`}
     >
       <span

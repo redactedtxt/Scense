@@ -152,7 +152,7 @@ function Footer() {
   return (
     <footer className="border-t border-line">
       <div
-        className={`${PAGE_WIDTH} grid grid-cols-1 gap-[22px] py-[34px] text-[9px] tracking-[0.06em] text-ghost sm:min-h-[130px] sm:grid-cols-[1fr_auto_1fr] sm:items-center sm:gap-0 sm:py-0`}
+        className={`${PAGE_WIDTH} grid grid-cols-1 gap-[22px] py-[34px] text-[9px] tracking-[0.06em] text-dim sm:min-h-[130px] sm:grid-cols-[1fr_auto_1fr] sm:items-center sm:gap-0 sm:py-0`}
       >
         <Logo className="opacity-70" />
         <p className="m-0 leading-normal">

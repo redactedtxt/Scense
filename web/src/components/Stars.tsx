@@ -99,7 +99,7 @@ export function SignInPrompt({ label, compact = false }: { label: string; compac
   return (
     <Link
       to={href}
-      className="inline-flex h-[46px] items-center border border-line-control px-6 text-[10px] font-semibold tracking-label text-faint uppercase transition-colors hover:border-gold-deep hover:text-text-bright"
+      className="inline-flex h-[46px] items-center border border-line-control px-6 text-[10px] font-semibold tracking-label text-dim uppercase transition-colors hover:border-gold-deep hover:text-text-bright"
     >
       {label}
     </Link>

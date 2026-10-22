@@ -104,7 +104,7 @@ function BasePicker({ base, onChange }: { base: Props["base"]; onChange: (slug: 
               setTyped("");
               inputRef.current?.focus();
             }}
-            className="cursor-pointer text-[22px] text-faint hover:text-text"
+            className="cursor-pointer text-[22px] text-dim hover:text-text"
           >
             ×
           </button>

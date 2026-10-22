@@ -11,6 +11,17 @@ jobs:
   api:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: api } }
+    # A throwaway Postgres loaded with the small test catalogue (M11; DECISIONS B39), so
+    # the integration tests that skip without TEST_DATABASE_URL run here too. It lives
+    # only for this job; the password is a CI-only placeholder, not a secret.
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: scense, POSTGRES_PASSWORD: scense_ci, POSTGRES_DB: scense_test }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U scense" --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://scense:scense_ci@localhost:5432/scense_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,6 +32,10 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      - name: Load the test catalogue
+        run: bash scripts/test-catalogue/load.sh
+        working-directory: .
+        env: { DATABASE_URL: "${{ env.TEST_DATABASE_URL }}" }
       - run: npm test
 
   web:
@@ -51,6 +66,53 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: pytest
+
+  # Playwright smoke tests (M11): the real API and the production web build against the
+  # test catalogue, with e2e/mock-anthropic.mjs standing in for the model. The API's key
+  # is a fake and its base URL is the mock, so this job can never reach or bill Anthropic.
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: scense, POSTGRES_PASSWORD: scense_ci, POSTGRES_DB: scense_test }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U scense" --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      E2E_DATABASE_URL: postgres://scense:scense_ci@localhost:5432/scense_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            api/package-lock.json
+            web/package-lock.json
+            e2e/package-lock.json
+      - run: npm ci
+        working-directory: api
+      - run: npm ci
+        working-directory: web
+      - run: npm ci
+        working-directory: e2e
+      - run: npm run typecheck
+        working-directory: e2e
+      - name: Load the test catalogue
+        run: bash scripts/test-catalogue/load.sh
+        env: { DATABASE_URL: "${{ env.E2E_DATABASE_URL }}" }
+      - run: npx playwright install --with-deps chromium
+        working-directory: e2e
+      - run: npm test
+        working-directory: e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 7
 
   docker:
     runs-on: ubuntu-latest

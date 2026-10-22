@@ -1,0 +1,11 @@
+-- M11: the contract step of an expand-and-contract change (DECISIONS B36, B39).
+--
+-- llm_usage.conversation_id assumed one chat per visitor per day. Migration 007 moved
+-- conversations into chat_conversations and only made this column nullable, so the old
+-- API container, which still wrote it, kept working in the seconds between "migrate"
+-- and "up -d" of that deploy. Since 007 no code reads or writes it, and 007 and 008
+-- have each been live through a deploy, so no running container can still need it.
+--
+-- Dropping it rewrites nothing: Postgres only marks the column dropped, so the
+-- ACCESS EXCLUSIVE lock on llm_usage lasts milliseconds.
+ALTER TABLE llm_usage DROP COLUMN conversation_id;

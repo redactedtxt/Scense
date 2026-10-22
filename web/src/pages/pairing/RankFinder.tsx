@@ -82,8 +82,10 @@ function RankAnswer({
 // .rank-result: name on the left, "#38 of 999" on the right.
 function RankLine(props: { name: string; figure: string; total: number | null; faded?: boolean; slug?: string }) {
   return (
-    <div className={`flex items-center justify-between gap-5 transition-opacity duration-[180ms] ${props.faded ? "opacity-25" : ""}`}>
-      <span className="min-w-0 font-display text-base text-muted">
+    // Waiting or idle ("#— of 999") is drawn in quiet colours, not faded with opacity:
+    // a 25% fade left the text at 1.4:1 contrast (M11 Lighthouse pass).
+    <div className="flex items-center justify-between gap-5">
+      <span className={`min-w-0 font-display text-base transition-colors ${props.faded ? "text-dim" : "text-muted"}`}>
         {props.slug ? (
           <Link to={`/f/${props.slug}`} className="hover:text-text-bright">
             {props.name}
@@ -92,9 +94,13 @@ function RankLine(props: { name: string; figure: string; total: number | null; f
           props.name
         )}
       </span>
-      <strong className="font-display text-[30px] font-normal whitespace-nowrap text-gold-bright">
+      <strong
+        className={`font-display text-[30px] font-normal whitespace-nowrap transition-colors ${
+          props.faded ? "text-dim" : "text-gold-bright"
+        }`}
+      >
         {props.figure}{" "}
-        <small className="font-sans text-[8px] tracking-[0.1em] text-faint uppercase">
+        <small className="font-sans text-[8px] tracking-[0.1em] text-dim uppercase">
           of {props.total ?? "—"}
         </small>
       </strong>

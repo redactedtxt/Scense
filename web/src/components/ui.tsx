@@ -19,7 +19,7 @@ export function ScoreBar({ score, caption }: { score: number; caption: string })
           style={{ width: `${Math.max(0, Math.min(100, score))}%` }}
         />
       </div>
-      <p className="m-0 font-display text-xs text-ghost italic">{caption}</p>
+      <p className="m-0 font-display text-xs text-dim italic">{caption}</p>
     </div>
   );
 }
@@ -125,7 +125,7 @@ export function TextTabs<T extends string>({
             onClick={() => onChange(tab.value)}
             onKeyDown={(event) => onKeyDown(event, index)}
             className={`cursor-pointer border-b pb-[7px] font-display text-[27px] transition-colors ${
-              selected ? "border-gold-kicker text-text-bright" : "border-transparent text-faint hover:text-muted"
+              selected ? "border-gold-kicker text-text-bright" : "border-transparent text-dim hover:text-muted"
             }`}
           >
             {tab.label}

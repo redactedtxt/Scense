@@ -19,6 +19,9 @@ const aiSchema = z.object({
   // the site works as usual. Tests never set it (vitest.config.ts blanks it).
   ANTHROPIC_API_KEY: z.string().default(""),
   ANTHROPIC_MODEL: z.string().min(1).default("claude-haiku-5-5"),
+  // Blank means Anthropic itself. The Playwright smoke tests point this at a local fake
+  // (e2e/mock-anthropic.mjs), so the real API code runs end to end and nothing is billed.
+  ANTHROPIC_BASE_URL: z.string().default(""),
   LLM_MAX_TOKENS: count(400),
   // A stuck call should fail fast and show the friendly message, not hang the page.
   LLM_TIMEOUT_SECONDS: count(20),
@@ -125,6 +128,7 @@ const MINUTE_MS = 60_000;
 export type AiSettings = {
   apiKey: string;
   model: string;
+  baseUrl: string; // "" = Anthropic itself
   maxTokens: number;
   timeoutMs: number;
   maxUserMessages: number;
@@ -153,6 +157,7 @@ export function aiSettings(config: z.infer<typeof aiSchema>): AiSettings {
   return {
     apiKey: config.ANTHROPIC_API_KEY.trim(),
     model: config.ANTHROPIC_MODEL,
+    baseUrl: config.ANTHROPIC_BASE_URL.trim(),
     maxTokens: config.LLM_MAX_TOKENS,
     timeoutMs: config.LLM_TIMEOUT_SECONDS * 1000,
     maxUserMessages: config.CHAT_MAX_USER_MESSAGES,

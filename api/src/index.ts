@@ -9,7 +9,9 @@ import { loadMatrices } from "./services/scoring.js";
 const config = loadConfig();
 const ai = aiSettings(config);
 // No key, no model client: the chat shows "unavailable" and everything else runs.
-const llm = ai.apiKey ? anthropicLlm(createAnthropicClient(ai.apiKey, ai.timeoutMs), ai.model, ai.maxTokens) : null;
+const llm = ai.apiKey
+  ? anthropicLlm(createAnthropicClient(ai.apiKey, ai.timeoutMs, ai.baseUrl), ai.model, ai.maxTokens)
+  : null;
 if (!llm) console.warn("ANTHROPIC_API_KEY is not set: the chat and the concierge will report the assistant as unavailable.");
 
 const app = createApp(
