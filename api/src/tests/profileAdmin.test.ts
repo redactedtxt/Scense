@@ -72,7 +72,7 @@ describe("guest import with a taste profile", () => {
 
 describe("GET /api/admin/usage", () => {
   const TOKEN = "test-admin-token-0123456789";
-  const day = { day: "2026-10-21", conversations: 3, guest_conversations: 2, user_messages: 10, input_tokens: "12000", output_tokens: "2000" };
+  const day = { day: "2026-10-21", visitors: 3, guests: 2, chats_started: 5, user_messages: 10, input_tokens: "12000", output_tokens: "2000" };
 
   it("does not exist without an ADMIN_TOKEN, and needs the right token when there is one", async () => {
     const { app: off } = appWith([], undefined, aiWith(null, { adminToken: "" }));
@@ -89,7 +89,9 @@ describe("GET /api/admin/usage", () => {
     expect(res.status).toBe(200);
     // 12,000 × $0.10/M + 2,000 × $0.50/M = $0.0012 + $0.001
     expect(res.body.days[0]).toMatchObject({ day: "2026-10-21", inputTokens: 12000, outputTokens: 2000, estimatedUsd: 0.0022 });
-    expect(res.body.monthToDate).toMatchObject({ conversations: 3, estimatedUsd: 0.0022 });
+    expect(res.body.days[0]).toMatchObject({ visitors: 3, guests: 2, chatsStarted: 5, userMessages: 10 });
+    expect(res.body.monthToDate).toMatchObject({ chatsStarted: 5, userMessages: 10, estimatedUsd: 0.0022 });
+    expect(res.body.monthToDate).not.toHaveProperty("visitors");
     expect(res.body).toMatchObject({ model: "claude-haiku-5-5", today: "2026-10-21", guestDailyConversationCap: 100 });
     expect(calls[0]!.params).toEqual(["2026-10-21", 7]);
   });

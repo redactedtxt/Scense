@@ -7,9 +7,12 @@ import { api, type User } from "./api";
 export const SESSION_KEY = ["session"] as const;
 export const ACCOUNT_COLLECTION_KEY = ["account-collection"] as const;
 export const ACCOUNT_TASTE_KEY = ["account-taste-profile"] as const;
-// Today's chat. The key changes with the visitor, so signing in or out never shows the
-// other subject's conversation.
+// The chat list with the day's count, and one chat's messages (DECISIONS B36). The keys
+// change with the visitor, so signing in or out never shows the other subject's chats,
+// and both sit under ["chat"], so sign-out clears every chat from the cache at once.
 export const chatKey = (userId: number | null) => ["chat", userId ?? "guest"] as const;
+export const chatConversationKey = (userId: number | null, id: string) =>
+  ["chat", userId ?? "guest", "conversation", id] as const;
 
 // Any failure counts as signed out: a 401 is the normal answer for a guest, and if the
 // API is down the site should still work in guest mode rather than show an error.

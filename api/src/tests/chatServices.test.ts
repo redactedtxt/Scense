@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { torontoDay } from "../services/caps.js";
+import { titleFrom } from "../services/conversations.js";
 import type { CatalogueEntry, CatalogueSnapshot } from "../services/catalogueCache.js";
 import { anthropicLlm, causeChain, LlmUnavailableError, type MessagesClient } from "../services/llm.js";
 import { OUTPUT_SCHEMA } from "../services/prompt.js";
@@ -296,5 +297,21 @@ describe("the Anthropic client wrapper", () => {
     expect(causeChain(outer)).toBe(
       "Error Connection error. key sk-ant-[redacted] <- TypeError fetch failed <- Error ENOTFOUND getaddrinfo ENOTFOUND api.anthropic.com",
     );
+  });
+});
+
+describe("titleFrom (DECISIONS B36)", () => {
+  it("keeps a short first message, with whitespace collapsed", () => {
+    expect(titleFrom("  warm\n\nvanilla   and smoke ")).toBe("warm vanilla and smoke");
+  });
+
+  it("cuts a long one at a word break, at most 60 characters, the same way migration 007 does", () => {
+    const title = titleFrom("I love warm vanilla scents but hate anything too fresh or citrusy");
+    expect(title).toBe("I love warm vanilla scents but hate anything too fresh or…");
+    expect(title.length).toBeLessThanOrEqual(60);
+  });
+
+  it("hard-cuts a first word with no break in it", () => {
+    expect(titleFrom("x".repeat(80))).toBe(`${"x".repeat(59)}…`);
   });
 });

@@ -4,7 +4,8 @@ import { useId, useState, type FormEvent, type KeyboardEvent } from "react";
 const MAX_CHARS = 500;
 
 // The message box, the Send button, the day's count, and the disclaimer SPEC section 8
-// asks for. `closedText` replaces the box when the chat can't take another message.
+// asks for. It sits pinned at the bottom of the chat panel. `closedText` replaces the box
+// when no chat can take another message. The count is the day's, shared by every chat.
 export function ChatInput({
   onSend,
   busy,
@@ -43,9 +44,9 @@ export function ChatInput({
   }
 
   return (
-    <div className="border-t border-line-strong pt-5">
+    <div className="border-t border-line-strong pt-4">
       {closedText ? (
-        <p role="status" className="m-0 mb-4 font-display text-lg leading-snug text-chip-on-text">
+        <p role="status" className="m-0 mb-3 font-display text-lg leading-snug text-chip-on-text">
           {closedText}
         </p>
       ) : (
@@ -59,13 +60,15 @@ export function ChatInput({
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={onKeyDown}
             maxLength={MAX_CHARS}
-            rows={3}
+            rows={2}
             placeholder="I like…"
-            className="mt-2 w-full resize-y border border-line-input bg-transparent p-3 font-display text-lg text-text-input outline-0 transition-colors placeholder:text-faint focus:border-gold"
+            className="mt-2 w-full resize-none border border-line-input bg-transparent p-3 font-display text-lg text-text-input outline-0 transition-colors placeholder:text-faint focus:border-gold"
           />
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
             <span className="text-[11px] text-dim tabular-nums">
-              {used} of {limit} messages used today · {MAX_CHARS - draft.length} characters left
+              {used} of {limit} messages used today
+              {/* Phones drop the character count so this line and Send share one row. */}
+              <span className="hidden sm:inline"> · {MAX_CHARS - draft.length} characters left</span>
             </span>
             <button
               type="submit"
@@ -77,8 +80,8 @@ export function ChatInput({
           </div>
         </form>
       )}
-      <p className="m-0 mt-4 text-[11px] leading-snug text-dim">
-        You get one chat per day, up to 8 messages. Recommendations come from our catalogue only.
+      <p className="m-0 mt-3 text-[11px] leading-snug text-dim">
+        Up to {limit} messages a day, shared across all your chats. Recommendations come from our catalogue only.
       </p>
     </div>
   );

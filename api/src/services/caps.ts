@@ -1,9 +1,10 @@
 import type { Db } from "../db.js";
 
-// AI caps (SPEC section 10). One llm_usage row per subject, feature, and Toronto day IS
-// that day's conversation: its user_messages counts the messages, its token columns the
-// spend. The UNIQUE (subject, feature, day) key is what makes "one conversation per day"
-// hold even when two requests arrive at once.
+// AI caps (SPEC section 10). One llm_usage row per subject, feature, and Toronto day is
+// that day's message budget: user_messages counts the messages, across every chat the
+// visitor has (DECISIONS B36), and the token columns the spend. The UNIQUE
+// (subject, feature, day) key is what lets one statement claim a slot safely even when
+// two messages, from the same chat or from two chats, arrive at once.
 
 export type Feature = "chat" | "concierge";
 
@@ -30,46 +31,49 @@ export function torontoDay(ms: number): string {
   return TORONTO_DATE.format(new Date(ms));
 }
 
-export type Reservation = { conversationId: string; userMessages: number; created: boolean };
+export type Reservation = { userMessages: number };
 export type Refusal = "daily_limit" | "guest_cap";
 
 // Claims the next message slot BEFORE the model is called, in one statement:
-//  - no row yet today: create the conversation with 1 message, unless the subject is a
-//    guest and today's guest conversations (both features) already reached the cap;
+//  - no row yet today: create the budget with 1 message, unless the subject is a guest
+//    who hasn't used any AI feature today and today's distinct guests already reached
+//    the site-wide cap;
 //  - a row: add 1, unless it already holds the maximum.
-// Claiming first means two quick messages can't both slip in as message 8.
+// Claiming first means two quick messages can't both slip in as message 8, whichever
+// chats they were sent from.
+//
+// The site-wide cap counts guests, not chats or features: a guest already counted today
+// (in any feature) never needs a second slot, so opening new chats costs nothing.
 //
 // Known gap: two brand-new guests in the same instant can both pass the site-wide count,
 // so the backstop can overshoot by the number of simultaneous first messages.
 export async function reserveMessage(
   db: Db,
   key: { subject: string; feature: Feature; day: string },
-  newConversationId: string,
   caps: CapSettings,
 ): Promise<Reservation | Refusal> {
   const isGuest = key.subject.startsWith("guest:");
   const { rows } = await db.query(
-    `INSERT INTO llm_usage (subject, feature, day, conversation_id, user_messages)
-     SELECT $1, $2, $3, $4, 1
-      WHERE NOT $5::boolean
-         OR EXISTS (SELECT 1 FROM llm_usage WHERE subject = $1 AND feature = $2 AND day = $3)
-         OR (SELECT count(*) FROM llm_usage WHERE day = $3 AND subject LIKE 'guest:%') < $6
+    `INSERT INTO llm_usage (subject, feature, day, user_messages)
+     SELECT $1, $2, $3, 1
+      WHERE NOT $4::boolean
+         OR EXISTS (SELECT 1 FROM llm_usage WHERE subject = $1 AND day = $3)
+         OR (SELECT count(DISTINCT subject) FROM llm_usage WHERE day = $3 AND subject LIKE 'guest:%') < $5
      ON CONFLICT (subject, feature, day) DO UPDATE
         SET user_messages = llm_usage.user_messages + 1
-      WHERE llm_usage.user_messages < $7
-     RETURNING conversation_id, user_messages, (xmax = 0) AS created`,
-    // xmax = 0 is Postgres's tell for "this row was inserted, not updated".
-    [key.subject, key.feature, key.day, newConversationId, isGuest, caps.guestDailyConversationCap, caps.maxUserMessages],
+      WHERE llm_usage.user_messages < $6
+     RETURNING user_messages`,
+    [key.subject, key.feature, key.day, isGuest, caps.guestDailyConversationCap, caps.maxUserMessages],
   );
   const row = rows[0];
-  if (row) return { conversationId: row.conversation_id, userMessages: row.user_messages, created: row.created };
-  // Nothing written: either today's conversation is full, or a new guest hit the cap.
+  if (row) return { userMessages: row.user_messages };
+  // Nothing written: either today's budget is used up, or a new guest hit the cap.
   return (await todaysUsage(db, key)) ? "daily_limit" : "guest_cap";
 }
 
 // Gives the slot back when Anthropic could not be reached: the visitor shouldn't lose one
-// of their 8 messages to our outage. A conversation left with no messages is deleted, so
-// it no longer counts toward the guest cap either.
+// of their 8 messages to our outage. A budget row left with no messages is deleted, so a
+// guest whose only message failed no longer counts toward the guest cap either.
 export async function refundMessage(db: Db, key: { subject: string; feature: Feature; day: string }): Promise<void> {
   await db.query(
     `UPDATE llm_usage SET user_messages = user_messages - 1
@@ -97,14 +101,15 @@ export async function addTokens(
   );
 }
 
+// Messages used today, across all of the subject's chats; null before the first one.
 export async function todaysUsage(
   db: Db,
   key: { subject: string; feature: Feature; day: string },
-): Promise<{ conversationId: string; userMessages: number } | null> {
+): Promise<{ userMessages: number } | null> {
   const { rows } = await db.query(
-    "SELECT conversation_id, user_messages FROM llm_usage WHERE subject = $1 AND feature = $2 AND day = $3",
+    "SELECT user_messages FROM llm_usage WHERE subject = $1 AND feature = $2 AND day = $3",
     [key.subject, key.feature, key.day],
   );
   const row = rows[0];
-  return row ? { conversationId: row.conversation_id, userMessages: row.user_messages } : null;
+  return row ? { userMessages: row.user_messages } : null;
 }

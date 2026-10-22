@@ -128,14 +128,22 @@ export type ChatRecommendation = {
 
 export type ChatMessage = { role: "user" | "assistant"; content: string; recommendations: ChatRecommendation[] };
 
+// One of the visitor's chats in the list (DECISIONS B36). The title is the visitor's own
+// first message, trimmed by the server; never the model's words.
+export type ChatSummary = { id: string; title: string; createdAt: string; lastMessageAt: string };
+
+// The day's budget is shared by every chat, so it comes with the list, not with a chat.
 export type ChatState = {
   available: boolean; // false when the server has no model configured
   messagesUsed: number;
   messagesLimit: number;
-  messages: ChatMessage[];
+  conversations: ChatSummary[]; // most recently used first
 };
 
+export type ChatConversation = { conversation: ChatSummary; messages: ChatMessage[] };
+
 export type ChatReply = {
+  conversation: ChatSummary; // the chat the message went to; new on a first message
   reply: string;
   profile: TasteProfile;
   recommendations: ChatRecommendation[];
@@ -156,7 +164,7 @@ export class ApiError extends Error {
 }
 
 // Every request carries the guest id (SPEC section 6). Pass 1 ignores it; pass 2's
-// LLM caps count conversations per guest with it. The session cookie rides along on its
+// LLM caps count messages and guests with it. The session cookie rides along on its
 // own: these are same-origin requests, and fetch sends cookies to its own origin.
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
@@ -264,10 +272,20 @@ export const api = {
   // --- chat and taste profile (pass 2, M9) ---
   chat: () => request<ChatState>("/chat"),
 
-  // A guest sends their profile (numbers only matter; the server never shows the model
-  // the summary) and owned ids; a signed-in user's come from the account.
-  sendChat: (body: { message: string; tasteProfile?: TasteProfile | null; owned?: number[] }) =>
-    request<ChatReply>("/chat", { method: "POST", body: JSON.stringify(body) }),
+  chatConversation: (id: string) => request<ChatConversation>(`/chat/${encodeURIComponent(id)}`),
+
+  // No conversationId starts a new chat. A guest sends their profile (numbers only
+  // matter; the server never shows the model the summary) and owned ids; a signed-in
+  // user's come from the account.
+  sendChat: (body: {
+    message: string;
+    conversationId?: string;
+    tasteProfile?: TasteProfile | null;
+    owned?: number[];
+  }) => request<ChatReply>("/chat", { method: "POST", body: JSON.stringify(body) }),
+
+  // Gives no messages back: today's count stays as it is.
+  deleteChat: (id: string) => request<void>(`/chat/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   tasteProfile: () => request<{ profile: TasteProfile | null }>("/profile/taste"),
 
