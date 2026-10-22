@@ -4,9 +4,12 @@ import type { CatalogueEntry, CatalogueSnapshot } from "../services/catalogueCac
 import { anthropicLlm, causeChain, LlmUnavailableError, type MessagesClient } from "../services/llm.js";
 import { OUTPUT_SCHEMA } from "../services/prompt.js";
 import { cosine, recommend } from "../services/recommend.js";
-import { capWords, createReplyGuard, normalize } from "../services/replyGuard.js";
+import { finishReply, PICKS_LEAD_IN } from "../services/chat.js";
+import { matchNamedBottles, namedBottlesNote, namedBottlesUpdate } from "../services/namedBottles.js";
+import { capWords, createReplyGuard, mentionsRules, normalize, withoutRuleTalk } from "../services/replyGuard.js";
+import { bestMatch } from "../services/search.js";
 import { completeProfile, describeProfile, emptyProfile, mergeProfile, profileInput } from "../services/taste.js";
-import { profileAt } from "./helpers.js";
+import { fakeDb, profileAt } from "./helpers.js";
 
 // The pure parts of the chat: the merge rule, the reply guard, recommendations, the cap
 // day, and the Anthropic client wrapper (with the SDK replaced by a stand-in).
@@ -102,6 +105,30 @@ describe("the reply guard", () => {
     expect(normalize("Dolce&Gabbana")).toBe("dolce gabbana");
   });
 
+  it("catches the reply talking about its own rules, but not ordinary sentences", () => {
+    for (const text of [
+      "I won't name fragrances, but warm Amber suits you.",
+      "I can't recommend specific bottles.",
+      "I'm not able to name brands here.",
+      "My instructions say to stick to notes.",
+      "The website picks the fragrances for you.",
+      "As an AI, I love vanilla notes.",
+    ]) {
+      expect(mentionsRules(text), text).toBe(true);
+      expect(guard.check(text), text).toBe("mentions_rules");
+    }
+    for (const text of ["I don't think you'd enjoy smoky notes.", "I can name the families you like: Amber.", "You mention vanilla twice."]) {
+      expect(mentionsRules(text), text).toBe(false);
+    }
+  });
+
+  it("drops only the rule-talk sentences", () => {
+    expect(withoutRuleTalk("Warm Amber suits you. I won't name fragrances, sorry! Do you like spice?")).toBe(
+      "Warm Amber suits you. Do you like spice?",
+    );
+    expect(withoutRuleTalk("I can't name brands.")).toBe("");
+  });
+
   it("caps text at a word count", () => {
     expect(capWords("a b c d", 3)).toBe("a b c…");
     expect(capWords("  a b  ", 3)).toBe("a b");
@@ -118,20 +145,109 @@ describe("recommendations (SPEC section 8 step 5)", () => {
     expect(cosine([0, 0], [1, 0])).toBe(0);
   });
 
+  // No threshold for owned bottles, to show the base rule on its own.
+  const all = { ownedMinMatch: 0 };
+
   it("with nothing owned, returns the 3 best positive matches", () => {
-    expect(recommend(entries, fruity, new Set()).map((r) => r.id)).toEqual([1, 4, 2]);
+    expect(recommend(entries, fruity, new Set(), all).map((r) => r.id)).toEqual([1, 4, 2]);
   });
 
   it("puts owned matches first, then only new bottles that beat the best owned one", () => {
-    const recs = recommend(entries, fruity, new Set([2]));
+    const recs = recommend(entries, fruity, new Set([2]), all);
     expect(recs.map((r) => [r.id, r.owned])).toEqual([[2, true], [1, false], [4, false]]);
     // Owning the best match leaves nothing new that beats it.
-    expect(recommend(entries, fruity, new Set([1])).map((r) => r.id)).toEqual([1]);
+    expect(recommend(entries, fruity, new Set([1]), all).map((r) => r.id)).toEqual([1]);
+  });
+
+  it("drops an owned bottle under the minimum match and shows the best others instead", () => {
+    // B (Citrus) matches this Fruity profile at about 20%: owning it is no reason to pick it.
+    const recs = recommend(entries, fruity, new Set([2]), { ownedMinMatch: 0.6 });
+    expect(recs.map((r) => [r.id, r.owned])).toEqual([[1, false], [4, false]]);
+    // An owned bottle that clears the bar still comes first.
+    expect(recommend(entries, fruity, new Set([4]), { ownedMinMatch: 0.6 }).map((r) => [r.id, r.owned])).toEqual([[4, true]]);
+  });
+
+  it("never picks a bottle the visitor named", () => {
+    expect(recommend(entries, fruity, new Set(), { ...all, exclude: new Set([1, 4]) }).map((r) => r.id)).toEqual([2]);
   });
 
   it("returns nothing for a blank profile or one that matches nothing", () => {
-    expect(recommend(entries, emptyProfile(), new Set())).toEqual([]);
-    expect(recommend(entries, completeProfile({ families: { Fruity: -1 }, facets: {} }), new Set())).toEqual([]);
+    expect(recommend(entries, emptyProfile(), new Set(), all)).toEqual([]);
+    expect(recommend(entries, completeProfile({ families: { Fruity: -1 }, facets: {} }), new Set(), all)).toEqual([]);
+  });
+});
+
+describe("bottles a visitor names (DECISIONS B35)", () => {
+  const amber = entry(10, "Myrrh & Tonka", "Jo Malone London", 1, [0.9, 0, 0, 0, 0.3, 0]);
+  const woods = entry(11, "Other", "x", 3, [0, 0.5, 0, 0, 0, 0]);
+
+  it("turns liked bottles into a strong update: largest weight 1, faint parts dropped", () => {
+    expect(namedBottlesUpdate([amber, woods], [10], { weight: 1, minWeight: 0.25 })).toEqual({
+      families: { Amber: 1 },
+      facets: { sweet: 0.9, smoky: 0.3 },
+    });
+    // Two bottles are averaged first.
+    const both = namedBottlesUpdate([amber, woods], [10, 11], { weight: 1, minWeight: 0.25 });
+    expect(both.families).toEqual({ Amber: 1, Woods: 1 });
+    expect(namedBottlesUpdate([amber], [], { weight: 1, minWeight: 0.25 })).toEqual({ families: {}, facets: {} });
+  });
+
+  it("describes what was found without naming anything", () => {
+    expect(namedBottlesNote({ matched: [10], liked: [10], unmatched: 2 })).toBe(
+      "I found 1 of the bottles you named in our catalogue and added its character to your profile; the others aren't in the catalogue yet.",
+    );
+    expect(namedBottlesNote({ matched: [10, 11], liked: [10, 11], unmatched: 0 })).toBe(
+      "I found the bottles you named in our catalogue and added their character to your profile.",
+    );
+    expect(namedBottlesNote({ matched: [10], liked: [], unmatched: 0 })).toBe("I found the bottle you named in our catalogue.");
+    expect(namedBottlesNote({ matched: [], liked: [], unmatched: 1 })).toBe(
+      "That bottle isn't in our catalogue yet, so I went by your description.",
+    );
+    expect(namedBottlesNote({ matched: [], liked: [], unmatched: 0 })).toBeNull();
+  });
+
+  it("looks a name up as typed, then without connector words, then by the typo search", async () => {
+    const { db, calls } = fakeDb([
+      [/search_vector @@/, (params) => (params[0] === "Myrrh:* & Tonka:*" ? [{ id: 335 }] : [])],
+      [/WITH scored AS/, []],
+    ]);
+    expect(await bestMatch(db as never, "Myrrh and Tonka", 0.3)).toBe(335);
+    expect(calls.map((c) => c.params[0])).toEqual(["Myrrh:* & and:* & Tonka:*", "Myrrh:* & Tonka:*"]);
+    expect(await bestMatch(db as never, "Hawas Fire", 0.3)).toBeNull();
+    expect(calls.at(-1)!.params).toEqual([["Hawas", "Fire"], 0.3]);
+  });
+
+  it("only looks up names the visitor really typed, once each", async () => {
+    const { db, calls } = fakeDb([[/search_vector @@/, [{ id: 7 }]]]);
+    const named = await matchNamedBottles(
+      db as never,
+      [{ name: "Hawas Fire.", liked: true }, { name: "hawas fire", liked: true }, { name: "Creed Aventus", liked: true }],
+      "I wear Hawas Fire a lot",
+      { max: 5, fuzzyMinSimilarity: 0.3 },
+    );
+    expect(named).toEqual({ matched: [7], liked: [7], unmatched: 0 });
+    expect(calls).toHaveLength(1); // "Creed Aventus" was never typed, so it is never searched
+  });
+});
+
+describe("the finished reply (DECISIONS B35)", () => {
+  it("replaces a closing offer of picks with a lead-in when picks are shown", () => {
+    const reply = "You like warm Amber with a spicy edge. Would you like some recommendations now?";
+    expect(finishReply(reply, { showingPicks: true, note: null })).toBe(`You like warm Amber with a spicy edge. ${PICKS_LEAD_IN}`);
+    expect(finishReply("Shall I suggest a few bottles?", { showingPicks: true, note: null })).toBe(PICKS_LEAD_IN);
+  });
+
+  it("leaves other questions alone, and keeps an offer when no picks are shown", () => {
+    const question = "Amber it is. Do you like spicy notes too?";
+    expect(finishReply(question, { showingPicks: true, note: null })).toBe(question);
+    const offer = "Amber it is. Would you like some recommendations?";
+    expect(finishReply(offer, { showingPicks: false, note: null })).toBe(offer);
+  });
+
+  it("puts the named-bottles note first", () => {
+    expect(finishReply("Warm Amber.", { showingPicks: false, note: "I found the bottle you named in our catalogue." })).toBe(
+      "I found the bottle you named in our catalogue. Warm Amber.",
+    );
   });
 });
 

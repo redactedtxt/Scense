@@ -9,8 +9,9 @@ import { guestIdOf } from "../middleware/guest.js";
 import { parseInput } from "../middleware/validate.js";
 import { addTokens, refundMessage, reserveMessage, subjectOf, todaysUsage, torontoDay } from "../services/caps.js";
 import type { CatalogueCache, CatalogueSnapshot } from "../services/catalogueCache.js";
-import { askModel, composeTurn, CONFUSED_REPLY } from "../services/chat.js";
+import { askModel, composeTurn, CONFUSED_REPLY, finishReply, type Turn } from "../services/chat.js";
 import type { Llm, LlmMessage } from "../services/llm.js";
+import { matchNamedBottles, namedBottlesNote, namedBottlesUpdate, type NamedBottles } from "../services/namedBottles.js";
 import { loadProfile, saveProfile } from "../services/profileStore.js";
 import { buildSystemPrompt } from "../services/prompt.js";
 import { recommend, type Recommendation } from "../services/recommend.js";
@@ -27,8 +28,12 @@ export type ChatDeps = {
   ai: AiSettings;
   llm: Llm | null; // null when no API key is configured
   catalogue: CatalogueCache;
+  // The typo search's threshold (scoring.yaml), for looking up bottles a visitor names.
+  fuzzyMinSimilarity: number;
   now: () => number;
 };
+
+const NO_NAMES: NamedBottles = { matched: [], liked: [], unmatched: 0 };
 
 const FEATURE = "chat" as const;
 
@@ -115,27 +120,65 @@ async function handleMessage(deps: ChatDeps, llm: Llm, subject: string, userId: 
     throw UNAVAILABLE;
   }
   const snapshot = await deps.catalogue.get();
-  const turn =
+  const named =
     result.kind === "ok"
-      ? composeTurn(result.output, old, createReplyGuard(snapshot), ai.replyMaxWords)
+      ? await matchNamedBottles(db, result.output.mentioned_fragrances, body.message, {
+          max: ai.namedMax,
+          fuzzyMinSimilarity: deps.fuzzyMinSimilarity,
+        })
+      : NO_NAMES;
+  const turn: Turn =
+    result.kind === "ok"
+      ? composeTurn(result.output, old, createReplyGuard(snapshot), ai.replyMaxWords, namedUpdate(snapshot, named, ai))
       : { reply: CONFUSED_REPLY, profile: old, replaced: false };
   if (userId !== null && result.kind === "ok") await saveProfile(db, userId, turn.profile);
 
   // Recommend when the model says it knows enough, or on the last message of the day
   // so a visitor who used all 8 never leaves empty-handed. The server decides either way.
   const ready = result.kind === "ok" && (result.output.ready_to_recommend || slot.userMessages >= ai.maxUserMessages);
-  const owned = new Set(userId !== null ? await ownedIds(db, userId) : (body.owned ?? []));
-  const recommendations = ready && !isBlank(turn.profile) ? recommend(snapshot.entries, turn.profile, owned) : [];
+  const recommendations = ready && !isBlank(turn.profile)
+    ? await pick(deps, snapshot, turn.profile, { userId, body, conversationId: slot.conversationId, named })
+    : [];
+  const reply =
+    result.kind === "ok"
+      ? finishReply(turn.reply, { showingPicks: recommendations.length > 0, note: namedBottlesNote(named) })
+      : turn.reply;
 
-  await storeExchange(db, slot.conversationId, body.message, turn.reply, recommendations);
+  await storeExchange(db, slot.conversationId, { message: body.message, named: named.matched }, reply, recommendations);
   return {
-    reply: turn.reply,
+    reply,
     profile: turn.profile,
     recommendations,
     degraded: result.kind === "invalid",
     messagesUsed: slot.userMessages,
     messagesLimit: ai.maxUserMessages,
   };
+}
+
+// Liked bottles the visitor named, as one strong profile update (DECISIONS B35).
+function namedUpdate(snapshot: CatalogueSnapshot, named: NamedBottles, ai: AiSettings) {
+  return namedBottlesUpdate(snapshot.entries, named.liked, { weight: ai.namedBottleWeight, minWeight: ai.namedMinWeight });
+}
+
+// The server's picks. Bottles named anywhere in today's conversation are left out: the
+// visitor already knows them.
+async function pick(
+  deps: ChatDeps,
+  snapshot: CatalogueSnapshot,
+  profile: TasteProfile,
+  turn: { userId: number | null; body: PostBody; conversationId: string; named: NamedBottles },
+): Promise<Recommendation[]> {
+  const owned = new Set(turn.userId !== null ? await ownedIds(deps.db, turn.userId) : (turn.body.owned ?? []));
+  const exclude = new Set([...(await namedEarlier(deps.db, turn.conversationId)), ...turn.named.matched]);
+  return recommend(snapshot.entries, profile, owned, { ownedMinMatch: deps.ai.ownedMinMatch, exclude });
+}
+
+async function namedEarlier(db: Db, conversationId: string): Promise<number[]> {
+  const { rows } = await db.query(
+    "SELECT DISTINCT unnest(named_fragrances) AS id FROM chat_messages WHERE conversation_id = $1",
+    [conversationId],
+  );
+  return rows.map((r) => r.id as number);
 }
 
 function guestProfile(body: PostBody): TasteProfile {
@@ -155,13 +198,22 @@ async function recentHistory(db: Db, conversationId: string, turns: number): Pro
   return history[0]?.role === "assistant" ? history.slice(1) : history;
 }
 
-async function storeExchange(db: Db, conversationId: string, message: string, reply: string, recs: Recommendation[]) {
+// Both sides of the exchange. The user row keeps the ids of bottles they named, so later
+// picks in the conversation can leave them out.
+async function storeExchange(
+  db: Db,
+  conversationId: string,
+  user: { message: string; named: number[] },
+  reply: string,
+  recs: Recommendation[],
+) {
   await db.query(
-    `INSERT INTO chat_messages (conversation_id, seq, role, content, recommendations)
-     SELECT $1, base.n + v.n, v.role, v.content, v.recs
+    `INSERT INTO chat_messages (conversation_id, seq, role, content, recommendations, named_fragrances)
+     SELECT $1, base.n + v.n, v.role, v.content, v.recs, v.named
        FROM (SELECT COALESCE(max(seq), 0) AS n FROM chat_messages WHERE conversation_id = $1) AS base,
-            (VALUES (1, 'user', $2, NULL::int[]), (2, 'assistant', $3, $4::int[])) AS v(n, role, content, recs)`,
-    [conversationId, message, reply, recs.map((r) => r.id)],
+            (VALUES (1, 'user', $2, NULL::int[], $5::int[]), (2, 'assistant', $3, $4::int[], NULL::int[]))
+            AS v(n, role, content, recs, named)`,
+    [conversationId, user.message, reply, recs.map((r) => r.id), user.named],
   );
 }
 

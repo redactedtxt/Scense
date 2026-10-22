@@ -4,6 +4,7 @@ import type { Db } from "../db.js";
 import { ApiError } from "../middleware/errors.js";
 import { parseInput } from "../middleware/validate.js";
 import { orderByClause, SORTS, type CatalogueSettings } from "../services/catalogue.js";
+import { FUZZY_MATCHED, searchWords, toPrefixQuery } from "../services/search.js";
 import { dominantFamilyId } from "../services/sql.js";
 
 export const PAGE_SIZE = 24;
@@ -18,35 +19,6 @@ const listQuery = z.object({
 });
 
 const slugParams = z.object({ slug: z.string().min(1).max(200) });
-
-const WORD = /[\p{L}\p{N}]+/gu;
-// Most words the typo fallback compares, so a pasted paragraph cannot make the query heavy.
-const MAX_FUZZY_WORDS = 6;
-
-// "cool wat" -> "cool:* & wat:*", so typing half a word still finds it. Only letters
-// and digits survive, which also keeps user text from breaking tsquery syntax.
-// A chunk with punctuation inside, such as "d&g", becomes a phrase ("d <-> g"): load.py
-// puts the alias into the vector as the same adjacent words, and a phrase keeps "d&g"
-// from matching every bottle that merely has a D word and a G word somewhere. Inside a
-// phrase a one-letter word must match exactly, or "d:*" would match "di" in "Acqua di Giò".
-// 'simple' must match the config load.py used to build search_vector, and the SQL
-// unaccents this text because load.py unaccented the vector.
-export function toPrefixQuery(text: string): string | null {
-  const chunks = text.split(/\s+/).map((chunk) => chunk.match(WORD)).filter((words) => words !== null);
-  if (chunks.length === 0) return null;
-  const terms = chunks.map((words) => {
-    const inPhrase = words.length > 1;
-    const phrase = words.map((w) => (inPhrase && w.length === 1 ? w : `${w}:*`)).join(" <-> ");
-    return inPhrase ? `(${phrase})` : phrase;
-  });
-  return terms.join(" & ");
-}
-
-// The words the typo fallback compares against the catalogue's words. One-letter words
-// are left out: they can't be misspelled, and "angel's" would demand a word like "s".
-export function searchWords(text: string): string[] {
-  return (text.match(WORD) ?? []).filter((w) => w.length > 1).slice(0, MAX_FUZZY_WORDS);
-}
 
 function summary(r: Record<string, unknown>) {
   return {
@@ -172,19 +144,6 @@ async function anyTextMatch(db: Db, tsquery: string): Promise<boolean> {
   );
   return rows[0].found === true;
 }
-
-// The typo fallback (DECISIONS B23). A bottle matches when EVERY typed word is close
-// (pg_trgm similarity) to some word in its search vector: name, brand, and aliases.
-// Results are ordered by total closeness, then votes. The catalogue is about 1,000 rows (about 12 ms for one typed word), so
-// comparing every word needs no index; revisit if it grows by orders of magnitude.
-const FUZZY_MATCHED = `WITH scored AS (
-    SELECT f.id, min(w.best) AS worst, sum(w.best) AS closeness
-      FROM fragrances f
-     CROSS JOIN LATERAL (
-           SELECT (SELECT max(similarity(u.lexeme, unaccent(lower(word)))) FROM unnest(f.search_vector) u) AS best
-             FROM unnest($1::text[]) AS word) w
-     GROUP BY f.id
-  )`;
 
 async function fuzzyList(db: Db, words: string[], filters: unknown[], offset: number, settings: CatalogueSettings) {
   const from = `FROM scored s

@@ -54,7 +54,7 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 ├── .github/workflows/
 │   ├── ci.yml
 │   └── deploy.yml
-├── db/migrations/                # 001_init.sql, 002_search_aliases.sql, 003_accounts.sql, 004_reviews.sql, 005_chat.sql
+├── db/migrations/                # 001_init.sql, 002_search_aliases.sql, 003_accounts.sql, 004_reviews.sql, 005_chat.sql, 006_chat_named_bottles.sql
 ├── pipeline/
 │   ├── raw/                      # Kaggle files, gitignored
 │   ├── config/
@@ -396,6 +396,12 @@ CREATE INDEX chat_messages_created_idx ON chat_messages (created_at);
 CREATE INDEX llm_usage_day_idx ON llm_usage (day);
 ```
 
+Migration `006_chat_named_bottles.sql` (M9 fixes; DECISIONS B35): the ids of bottles a visitor named in a message, so they stay out of that day's picks.
+
+```sql
+ALTER TABLE chat_messages ADD COLUMN named_fragrances INTEGER[];
+```
+
 ---
 
 ## 6. Guest mode
@@ -467,15 +473,18 @@ Flow per user message:
   "reply": "string, under 120 words, explains which notes the user is describing",
   "profile_update": { "families": { "Woody Amber": 0.6 }, "facets": { "spicy": 0.5, "smoky": -0.4 } },
   "summary": "You lean toward warm spicy scents and avoid smoky ones.",
+  "mentioned_fragrances": [{ "name": "Myrrh and Tonka", "liked": true }],
   "ready_to_recommend": true
 }
 ```
 
 4. Merge: new weight = clamp(0.6 × old + 0.4 × update, -1, 1). Save to `taste_profiles` (users) or return it to the client (guests).
-5. When `ready_to_recommend` is true, `recommend.ts` scores every fragrance: cosine similarity between the taste vector (14 families + 6 facets) and the fragrance vector (profile + facets). Return up to 3 owned matches first, then up to 3 non-owned matches that score higher than the best owned match.
+5. When `ready_to_recommend` is true, `recommend.ts` scores every fragrance: cosine similarity between the taste vector (14 families + 6 facets) and the fragrance vector (profile + facets). Return up to 3 owned matches first, then up to 3 non-owned matches that score higher than the best owned match. An owned bottle counts only if it matches at least `CHAT_OWNED_MIN_MATCH` (0.6); bottles the visitor named in that day's conversation are never picked (DECISIONS B35).
 6. The UI shows the reply, the recommendation cards, and the updated taste profile card.
 
 Untrusted input (M9; DECISIONS B34): before a reply or summary is shown, the server caps it at 120 words and replaces it with a reply built from the profile numbers if it names any catalogue fragrance, brand, or brand alias, contains a link, or mentions no family, facet, note, or scent word. A guest's profile reaches the model as numbers only. If the Anthropic call fails, the message is refunded and the chat says the assistant is unavailable; two invalid answers in a row return a friendly apology and count the message.
+
+Named bottles and reply rules (DECISIONS B35): names in `mentioned_fragrances` that the visitor really typed are looked up with the catalogue search (aliases and typo fallback). Liked ones are blended in as a strong profile update. The reply starts with a server sentence saying how many were found, never which. When picks are shown, a closing offer of picks is replaced by a lead-in. The reply never mentions its own rules: such sentences are removed, and the guard checks for them.
 
 The disclaimer under the input: "You get one chat per day, up to 8 messages. Recommendations come from our catalogue only."
 

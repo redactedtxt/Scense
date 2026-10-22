@@ -10,6 +10,7 @@ const flag = z.enum(["true", "false"]).transform((value) => value === "true");
 const unsetIfBlank = (value: unknown) => (value === "" ? undefined : value);
 const count = (fallback: number) => z.preprocess(unsetIfBlank, z.coerce.number().int().min(0).default(fallback));
 const price = (fallback: number) => z.preprocess(unsetIfBlank, z.coerce.number().min(0).default(fallback));
+const fraction = (fallback: number) => z.preprocess(unsetIfBlank, z.coerce.number().min(0).max(1).default(fallback));
 
 // The AI settings (M9) are their own schema so tests and createApp can build the
 // defaults without a database URL or a JWT secret (aiDefaults below).
@@ -27,6 +28,16 @@ const aiSchema = z.object({
   CHAT_MESSAGE_MAX_CHARS: count(500),
   CHAT_REPLY_MAX_WORDS: count(120),
   CHAT_RETENTION_DAYS: count(7),
+  // An owned bottle is shown as a pick only if it matches the taste profile at least
+  // this well (cosine, 0 to 1). Otherwise owning a 41% match would push it to the top.
+  CHAT_OWNED_MIN_MATCH: fraction(0.6),
+  // Bottles a visitor names in the chat ("my favourite is ...") count as a strong
+  // profile update: their profile, scaled so its largest weight is this, merged like
+  // the model's update. Weights under CHAT_NAMED_MIN_WEIGHT after scaling are dropped,
+  // so a bottle's faint families don't nudge everything. At most CHAT_NAMED_MAX a turn.
+  CHAT_NAMED_BOTTLE_WEIGHT: fraction(1),
+  CHAT_NAMED_MIN_WEIGHT: fraction(0.25),
+  CHAT_NAMED_MAX: count(5),
   GUEST_DAILY_CONVERSATION_CAP: count(100),
   // US dollars per million tokens, for the admin report's cost estimate only.
   // claude-haiku-5-5 list prices on 2026-10-21 (prompts up to 100K tokens).
@@ -109,6 +120,10 @@ export type AiSettings = {
   messageMaxChars: number;
   replyMaxWords: number;
   retentionDays: number;
+  ownedMinMatch: number;
+  namedBottleWeight: number;
+  namedMinWeight: number;
+  namedMax: number;
   guestDailyConversationCap: number;
   inputUsdPerMTok: number;
   outputUsdPerMTok: number;
@@ -130,6 +145,10 @@ export function aiSettings(config: z.infer<typeof aiSchema>): AiSettings {
     messageMaxChars: config.CHAT_MESSAGE_MAX_CHARS,
     replyMaxWords: config.CHAT_REPLY_MAX_WORDS,
     retentionDays: config.CHAT_RETENTION_DAYS,
+    ownedMinMatch: config.CHAT_OWNED_MIN_MATCH,
+    namedBottleWeight: config.CHAT_NAMED_BOTTLE_WEIGHT,
+    namedMinWeight: config.CHAT_NAMED_MIN_WEIGHT,
+    namedMax: config.CHAT_NAMED_MAX,
     guestDailyConversationCap: config.GUEST_DAILY_CONVERSATION_CAP,
     inputUsdPerMTok: config.LLM_INPUT_USD_PER_MTOK,
     outputUsdPerMTok: config.LLM_OUTPUT_USD_PER_MTOK,

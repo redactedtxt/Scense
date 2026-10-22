@@ -6,6 +6,7 @@ import { createApp } from "../app.js";
 import { signSession } from "../services/auth.js";
 import { torontoDay } from "../services/caps.js";
 import { LlmUnavailableError, type Llm } from "../services/llm.js";
+import { bestMatch } from "../services/search.js";
 import { aiWith, auth, matrices, modelJson, settings } from "./helpers.js";
 
 // The cap SQL, the transcript, and the taste profile against a real Postgres with
@@ -87,6 +88,23 @@ describe.skipIf(!url)("chat caps against Postgres", () => {
     const { rows } = await pool.query("SELECT * FROM llm_usage WHERE subject = $1", [subjects[3]]);
     expect(rows).toHaveLength(0); // an empty conversation doesn't hold a guest-cap slot
     expect((await say(app, guests[3]!, "back now")).body.messagesUsed).toBe(1);
+  });
+
+  it("finds named bottles with the catalogue search, and only real ones (DECISIONS B35)", async () => {
+    const { rows } = await pool.query(
+      "SELECT id FROM fragrances WHERE brand = 'Jo Malone London' AND name = 'Myrrh & Tonka'",
+    );
+    // Tejas's first real test: "my favourites are Myrrh and Tonka, SWY Intensely, Hawas Fire".
+    expect(await bestMatch(pool, "Myrrh and Tonka", settings.fuzzyMinSimilarity)).toBe(rows[0].id);
+    // The "swy" name alias (name_aliases.csv) covers all three Stronger With You bottles;
+    // "Intensely" picks the one meant.
+    const swy = await pool.query("SELECT id FROM fragrances WHERE name = 'Emporio Armani Stronger With You Intensely'");
+    expect(await bestMatch(pool, "SWY Intensely", settings.fuzzyMinSimilarity)).toBe(swy.rows[0].id);
+    expect(await bestMatch(pool, "Hawas Fire", settings.fuzzyMinSimilarity)).toBeNull(); // not in the catalogue
+    // The most voted bottle wins, and a typo still finds it.
+    const aventus = await pool.query("SELECT id FROM fragrances WHERE brand = 'Creed' AND name = 'Aventus'");
+    expect(await bestMatch(pool, "aventus", settings.fuzzyMinSimilarity)).toBe(aventus.rows[0].id);
+    expect(await bestMatch(pool, "Aventis", settings.fuzzyMinSimilarity)).toBe(aventus.rows[0].id);
   });
 
   it("saves a signed-in user's profile, and a guest import never overwrites it", async () => {

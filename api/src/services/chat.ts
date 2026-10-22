@@ -1,6 +1,6 @@
 import { LlmUnavailableError, type Llm, type LlmMessage } from "./llm.js";
 import { modelOutput, OUTPUT_SCHEMA, type ModelOutput } from "./prompt.js";
-import { capWords, type ReplyGuard } from "./replyGuard.js";
+import { capWords, withoutRuleTalk, type ReplyGuard } from "./replyGuard.js";
 import {
   clamp,
   describeProfile,
@@ -60,23 +60,53 @@ export function parseOutput(text: string, stopReason: string | null): ModelOutpu
 export type Turn = { reply: string; profile: TasteProfile; replaced: boolean };
 
 // The model's answer, made safe to show and store:
-//  - the profile update is clamped to -1..1 and merged (unknown keys never got past Zod);
-//  - the reply is capped at maxWords, and replaced by a server-written one if the guard
-//    finds a product name, a link, or nothing about scent;
+//  - the profile update is clamped to -1..1 and merged (unknown keys never got past Zod),
+//    then the update from bottles the visitor named (namedBottles.ts) on top of it;
+//  - the reply is capped at maxWords, loses any sentence about its own rules, and is
+//    replaced by a server-written one if what's left names a product, has a link, or
+//    says nothing about scent;
 //  - the summary gets the same checks, falling back to one built from the numbers.
 export function composeTurn(
   output: ModelOutput,
   old: TasteProfile,
   guard: ReplyGuard,
   maxWords: number,
+  namedUpdate: ProfileUpdate = { families: {}, facets: {} },
 ): Turn {
   const update = clampUpdate(output.profile_update);
-  const merged = mergeProfile(old, update, null);
+  const merged = mergeProfile(mergeProfile(old, update, null), namedUpdate, null);
   const summary = safeSummary(output.summary, guard) ?? describeProfile(merged);
   const profile = { ...merged, summary };
-  const reply = capWords(output.reply, maxWords);
-  if (guard.check(reply) === "ok") return { reply, profile, replaced: false };
+  const reply = withoutRuleTalk(capWords(output.reply, maxWords));
+  if (reply !== "" && guard.check(reply) === "ok") return { reply, profile, replaced: false };
   return { reply: fallbackReply(update), profile, replaced: true };
+}
+
+// Shown before the picks when the reply ended by offering them (DECISIONS B35).
+export const PICKS_LEAD_IN = "Here are a few picks from the catalogue that fit.";
+
+// A closing question that offers recommendations: "Would you like some recommendations
+// now?", "Shall I suggest a few bottles?". Only a question with both an offer and
+// something to offer counts, so "Do you like spicy notes too?" stays.
+const OFFER = /\b(?:would you like|do you want|want me to|shall i|should i|can i|could i|ready (?:for|to)|like to see|interested in)\b/i;
+const OFFERED = /\b(?:recommend\w*|suggest\w*|picks?|options|ideas|bottles?|fragrances?|perfumes?|matches)\b/i;
+
+function isOffer(sentence: string): boolean {
+  return sentence.trim().endsWith("?") && OFFER.test(sentence) && OFFERED.test(sentence);
+}
+
+// The reply as finally shown, around the server's own sentences:
+//  - when picks are shown under it, a closing offer of picks is replaced by a lead-in
+//    (the cards are already there, so asking makes no sense);
+//  - a note about named bottles (how many were found, never which) goes first.
+export function finishReply(reply: string, options: { showingPicks: boolean; note: string | null }): string {
+  let body = reply;
+  if (options.showingPicks) {
+    const sentences = reply.match(/[^.!?]+[.!?]*\s*/g) ?? [reply];
+    const last = sentences[sentences.length - 1] ?? "";
+    if (isOffer(last)) body = `${sentences.slice(0, -1).join("")}${PICKS_LEAD_IN}`.trim();
+  }
+  return options.note ? `${options.note} ${body}` : body;
 }
 
 function clampUpdate(update: ModelOutput["profile_update"]): ProfileUpdate {
@@ -100,7 +130,7 @@ export function fallbackReply(update: ProfileUpdate): string {
   const likes = named.filter((w) => w.value > 0).map((w) => w.name);
   const dislikes = named.filter((w) => w.value < 0).map((w) => w.name);
   if (likes.length === 0 && dislikes.length === 0) {
-    return "I can only help describe the scents you like and dislike. What smells do you enjoy, or can't stand?";
+    return "Let's stay with scent: what smells do you enjoy, and which can't you stand?";
   }
   const heard = [
     likes.length > 0 ? `you enjoy ${likes.join(", ")}` : null,

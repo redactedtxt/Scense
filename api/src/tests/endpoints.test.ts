@@ -1,6 +1,6 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
-import { searchWords, toPrefixQuery } from "../routes/fragrances.js";
+import { searchWords, toPrefixQuery } from "../services/search.js";
 import { orderByClause, SORTS } from "../services/catalogue.js";
 import { appWith, profileAt, settings } from "./helpers.js";
 

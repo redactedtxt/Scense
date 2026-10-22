@@ -64,6 +64,7 @@ export function modelJson(overrides: Record<string, unknown> = {}): Partial<LlmR
       reply: "That sounds like warm Woody Amber with a spicy edge. Do you enjoy sweet notes too?",
       profile_update: { families: { "Woody Amber": 1 }, facets: { spicy: 0.5 } },
       summary: "You lean toward warm spicy scents.",
+      mentioned_fragrances: [],
       ready_to_recommend: false,
       ...overrides,
     }),
