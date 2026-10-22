@@ -8,6 +8,14 @@ import { ApiError } from "../middleware/errors.js";
 import { guestIdOf } from "../middleware/guest.js";
 import { parseInput } from "../middleware/validate.js";
 import { addTokens, refundMessage, reserveMessage, subjectOf, todaysUsage, torontoDay } from "../services/caps.js";
+import {
+  deleteConversation,
+  findConversation,
+  listConversations,
+  purgeExpiredConversations,
+  titleFrom,
+  type ConversationSummary,
+} from "../services/conversations.js";
 import type { CatalogueCache, CatalogueSnapshot } from "../services/catalogueCache.js";
 import { askModel, composeTurn, CONFUSED_REPLY, finishReply, type Turn } from "../services/chat.js";
 import type { Llm, LlmMessage } from "../services/llm.js";
@@ -20,7 +28,9 @@ import { completeProfile, emptyProfile, isBlank, profileInput, type TasteProfile
 
 // The chatbot (SPEC section 8) with its caps (section 10). The model only turns words
 // into weights; the server picks every fragrance, checks every reply, and counts every
-// message and token. DECISIONS B34 records the choices the spec left open.
+// message and token. DECISIONS B34 records the choices the spec left open. A visitor can
+// keep several chats (B36): each has its own transcript and named-bottle exclusions,
+// while the taste profile and the day's 8 messages are shared by all of them.
 
 export type ChatDeps = {
   db: Db;
@@ -37,6 +47,11 @@ const NO_NAMES: NamedBottles = { matched: [], liked: [], unmatched: 0 };
 
 const FEATURE = "chat" as const;
 
+const NO_CHAT = new ApiError(404, "no_chat", "That chat is gone. It may have been deleted, or it expired.");
+
+// A chat id in a URL or body. Anything else is treated as a chat that doesn't exist.
+const chatId = z.string().uuid();
+
 const UNAVAILABLE = new ApiError(
   503,
   "assistant_unavailable",
@@ -48,26 +63,44 @@ export function chatRouter(deps: ChatDeps): Router {
   router.use("/chat", optionalUser(deps.auth));
   const postBody = z.object({
     message: z.string().trim().min(1).max(deps.ai.messageMaxChars),
+    // Absent for the first message of a new chat: the chat is created only once that
+    // message is answered, so "New chat" itself is free and leaves nothing behind.
+    conversationId: chatId.optional(),
     // Guests only: their profile and Own list live in the browser (SPEC section 6).
     // A signed-in user's come from the database and these are ignored.
     tasteProfile: profileInput.nullable().optional(),
     owned: z.array(z.number().int().positive()).max(2000).optional(),
   });
-  // One message at a time per visitor. A second one sent before the first is answered
-  // would read the same history and profile and race it into the transcript.
+  // One message at a time per visitor, not per chat. A second one sent before the first
+  // is answered would read the same taste profile, which every chat shares, and one of
+  // the two merges would be lost. (The daily count doesn't rely on this lock: the slot
+  // claim in caps.ts is atomic in the database.)
   const busy = new Set<string>();
 
+  // The day's shared budget and the visitor's chat list. Messages load per chat.
   router.get("/chat", async (req, res) => {
     const subject = requireSubject(req, res);
     const usage = await todaysUsage(deps.db, { subject, feature: FEATURE, day: torontoDay(deps.now()) });
-    const userId = res.locals.userId as number | null;
-    const messages = usage ? await transcriptForPage(deps, usage.conversationId, userId) : [];
     res.json({
       available: deps.llm !== null,
       messagesUsed: usage?.userMessages ?? 0,
       messagesLimit: deps.ai.maxUserMessages,
-      messages,
+      conversations: await listConversations(deps.db, subject),
     });
+  });
+
+  router.get("/chat/:id", async (req, res) => {
+    const subject = requireSubject(req, res);
+    const conversation = await ownConversation(deps.db, subject, req.params.id);
+    const messages = await transcriptForPage(deps, conversation.id, res.locals.userId as number | null);
+    res.json({ conversation, messages });
+  });
+
+  // No refund: the budget is counted in llm_usage, which holds no text and isn't touched.
+  router.delete("/chat/:id", async (req, res) => {
+    const subject = requireSubject(req, res);
+    if (chatId.safeParse(req.params.id).success) await deleteConversation(deps.db, subject, req.params.id);
+    res.status(204).end();
   });
 
   router.post("/chat", async (req, res) => {
@@ -93,24 +126,40 @@ function requireSubject(req: Parameters<typeof guestIdOf>[0], res: Response): st
   return subject;
 }
 
-type PostBody = { message: string; tasteProfile?: z.infer<typeof profileInput> | null; owned?: number[] };
+type PostBody = {
+  message: string;
+  conversationId?: string;
+  tasteProfile?: z.infer<typeof profileInput> | null;
+  owned?: number[];
+};
+
+// The visitor's own chat, or a 404 for a malformed id, someone else's chat, or a chat
+// that was deleted or expired.
+async function ownConversation(db: Db, subject: string, id: string): Promise<ConversationSummary> {
+  const conversation = chatId.safeParse(id).success ? await findConversation(db, subject, id) : null;
+  if (conversation === null) throw NO_CHAT;
+  return conversation;
+}
 
 // One user message, start to finish: claim a slot, ask the model, check its answer,
 // save, recommend, and store both sides of the exchange.
 async function handleMessage(deps: ChatDeps, llm: Llm, subject: string, userId: number | null, body: PostBody) {
   const { db, ai } = deps;
   const key = { subject, feature: FEATURE, day: torontoDay(deps.now()) };
-  const slot = await reserveMessage(db, key, randomUUID(), ai);
+  // Checked before a slot is claimed, so a message to a missing chat costs nothing.
+  const existing = body.conversationId ? await ownConversation(db, subject, body.conversationId) : null;
+  const conversationId = existing?.id ?? randomUUID();
+  const slot = await reserveMessage(db, key, ai);
   if (slot === "daily_limit") {
-    throw new ApiError(429, "chat_limit", `You've used today's chat (${ai.maxUserMessages} messages). Come back tomorrow.`);
+    throw new ApiError(429, "chat_limit", `You've used today's ${ai.maxUserMessages} messages. Come back tomorrow; your chats stay here to read.`);
   }
   if (slot === "guest_cap") {
     throw new ApiError(429, "guest_cap", "Today's guest demos are used up. Sign up or come back tomorrow.");
   }
-  if (slot.created) await purgeOldTranscripts(db, ai.retentionDays);
+  if (existing === null) await purgeExpiredConversations(db, ai.retentionDays);
 
   const old = userId !== null ? ((await loadProfile(db, userId)) ?? emptyProfile()) : guestProfile(body);
-  const history = await recentHistory(db, slot.conversationId, ai.historyTurns);
+  const history = existing ? await recentHistory(db, conversationId, ai.historyTurns) : [];
   const system = buildSystemPrompt(old, ai.replyMaxWords);
   const result = await askModel(llm, system, [...history, { role: "user", content: body.message }]);
   await addTokens(db, key, result.tokens);
@@ -137,15 +186,22 @@ async function handleMessage(deps: ChatDeps, llm: Llm, subject: string, userId: 
   // so a visitor who used all 8 never leaves empty-handed. The server decides either way.
   const ready = result.kind === "ok" && (result.output.ready_to_recommend || slot.userMessages >= ai.maxUserMessages);
   const recommendations = ready && !isBlank(turn.profile)
-    ? await pick(deps, snapshot, turn.profile, { userId, body, conversationId: slot.conversationId, named })
+    ? await pick(deps, snapshot, turn.profile, { userId, body, conversationId, named })
     : [];
   const reply =
     result.kind === "ok"
       ? finishReply(turn.reply, { showingPicks: recommendations.length > 0, note: namedBottlesNote(named) })
       : turn.reply;
 
-  await storeExchange(db, slot.conversationId, { message: body.message, named: named.matched }, reply, recommendations);
+  const conversation = await storeExchange(
+    db,
+    { id: conversationId, subject },
+    { message: body.message, named: named.matched },
+    reply,
+    recommendations,
+  );
   return {
+    conversation,
     reply,
     profile: turn.profile,
     recommendations,
@@ -160,8 +216,8 @@ function namedUpdate(snapshot: CatalogueSnapshot, named: NamedBottles, ai: AiSet
   return namedBottlesUpdate(snapshot.entries, named.liked, { weight: ai.namedBottleWeight, minWeight: ai.namedMinWeight });
 }
 
-// The server's picks. Bottles named anywhere in today's conversation are left out: the
-// visitor already knows them.
+// The server's picks. Bottles named anywhere in this chat are left out: the visitor
+// already knows them. Each chat keeps its own list (DECISIONS B36).
 async function pick(
   deps: ChatDeps,
   snapshot: CatalogueSnapshot,
@@ -198,28 +254,39 @@ async function recentHistory(db: Db, conversationId: string, turns: number): Pro
   return history[0]?.role === "assistant" ? history.slice(1) : history;
 }
 
-// Both sides of the exchange. The user row keeps the ids of bottles they named, so later
-// picks in the conversation can leave them out.
+// Both sides of the exchange, in one statement. A new chat's row is created here, after
+// its first message was answered, titled from that message; an existing chat's row only
+// moves its last_message_at. The user row keeps the ids of bottles they named, so later
+// picks in the chat can leave them out.
 async function storeExchange(
   db: Db,
-  conversationId: string,
+  chat: { id: string; subject: string },
   user: { message: string; named: number[] },
   reply: string,
   recs: Recommendation[],
-) {
-  await db.query(
-    `INSERT INTO chat_messages (conversation_id, seq, role, content, recommendations, named_fragrances)
-     SELECT $1, base.n + v.n, v.role, v.content, v.recs, v.named
-       FROM (SELECT COALESCE(max(seq), 0) AS n FROM chat_messages WHERE conversation_id = $1) AS base,
-            (VALUES (1, 'user', $2, NULL::int[], $5::int[]), (2, 'assistant', $3, $4::int[], NULL::int[]))
-            AS v(n, role, content, recs, named)`,
-    [conversationId, user.message, reply, recs.map((r) => r.id), user.named],
+): Promise<ConversationSummary> {
+  const { rows } = await db.query(
+    `WITH conversation AS (
+       INSERT INTO chat_conversations (id, subject, title) VALUES ($1, $6, $7)
+       ON CONFLICT (id) DO UPDATE SET last_message_at = now()
+       RETURNING id, title, created_at, last_message_at
+     ), stored AS (
+       INSERT INTO chat_messages (conversation_id, seq, role, content, recommendations, named_fragrances)
+       SELECT $1, base.n + v.n, v.role, v.content, v.recs, v.named
+         FROM (SELECT COALESCE(max(seq), 0) AS n FROM chat_messages WHERE conversation_id = $1) AS base,
+              (VALUES (1, 'user', $2, NULL::int[], $5::int[]), (2, 'assistant', $3, $4::int[], NULL::int[]))
+              AS v(n, role, content, recs, named)
+     )
+     SELECT * FROM conversation`,
+    [chat.id, user.message, reply, recs.map((r) => r.id), user.named, chat.subject, titleFrom(user.message)],
   );
-}
-
-// Visitors' words are kept only as long as the chat needs them (DECISIONS B34).
-async function purgeOldTranscripts(db: Db, retentionDays: number) {
-  await db.query("DELETE FROM chat_messages WHERE created_at < now() - make_interval(days => $1)", [retentionDays]);
+  const row = rows[0];
+  return {
+    id: row.id,
+    title: row.title,
+    createdAt: new Date(row.created_at).toISOString(),
+    lastMessageAt: new Date(row.last_message_at).toISOString(),
+  };
 }
 
 async function ownedIds(db: Db, userId: number): Promise<number[]> {
@@ -227,7 +294,7 @@ async function ownedIds(db: Db, userId: number): Promise<number[]> {
   return rows.map((r) => r.fragrance_id as number);
 }
 
-// Today's messages for the page, with each reply's recommendation cards rebuilt from
+// One chat's messages for the page, with each reply's recommendation cards rebuilt from
 // the stored ids. `owned` is known for a user; a guest's page marks it from the browser.
 async function transcriptForPage(deps: ChatDeps, conversationId: string, userId: number | null) {
   const { rows } = await deps.db.query(

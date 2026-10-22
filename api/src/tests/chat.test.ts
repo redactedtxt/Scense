@@ -21,7 +21,12 @@ const FRAGRANCES = [
   { id: 4, slug: "jo-malone-london-myrrh-tonka-2013", name: "Myrrh & Tonka", brand: "Jo Malone London", family: "Amber", profile: profileAt(1) },
 ].map((f) => ({ ...f, image_url: null, facets: { spicy: f.id === 3 ? 0.4 : 0, sweet: f.id === 4 ? 0.9 : 0 } }));
 
-type Reserve = { conversation_id: string; user_messages: number; created: boolean } | null;
+type Reserve = { user_messages: number } | null;
+
+// A chat row as Postgres returns it.
+const chatRow = (id: string, title = "warm spicy woods") => ({
+  id, title, created_at: new Date("2026-10-21T14:00:00Z"), last_message_at: new Date("2026-10-21T15:00:00Z"),
+});
 
 // The SQL the chat route sends, answered from `state`. `reserve` is what the cap
 // statement returns: a row (slot claimed) or nothing (refused).
@@ -31,6 +36,7 @@ function chatRoutes(state: {
   history?: unknown[];
   profileRow?: unknown;
   namedEarlier?: number[];
+  ownsChat?: boolean; // whether CONVERSATION belongs to the visitor
 }) {
   return [
     // The catalogue search for named bottles: only "Myrrh & Tonka" is found (the
@@ -39,12 +45,15 @@ function chatRoutes(state: {
     [/WITH scored AS/, []],
     [/unnest\(named_fragrances\)/, () => (state.namedEarlier ?? []).map((id) => ({ id }))],
     [/INSERT INTO llm_usage/, () => (state.reserve ? [state.reserve] : [])],
-    [/SELECT conversation_id, user_messages FROM llm_usage/, () =>
-      state.usageRow ? [{ conversation_id: CONVERSATION, user_messages: 8 }] : []],
+    [/SELECT user_messages FROM llm_usage/, () => (state.usageRow ? [{ user_messages: 8 }] : [])],
+    // storeExchange: creates or touches the chat row and returns it.
+    [/WITH conversation AS/, (params: unknown[]) => [chatRow(params[0] as string, params[6] as string)]],
+    [/FROM chat_conversations WHERE id = \$1 AND subject = \$2/, () => (state.ownsChat ? [chatRow(CONVERSATION)] : [])],
+    [/FROM chat_conversations\s+WHERE subject = \$1/, [chatRow(CONVERSATION)]],
+    [/DELETE FROM chat_conversations/, []],
     [/UPDATE llm_usage SET input_tokens/, []],
     [/UPDATE llm_usage SET user_messages/, []],
     [/DELETE FROM llm_usage/, []],
-    [/DELETE FROM chat_messages/, []],
     [/SELECT role, content FROM chat_messages/, () => state.history ?? []],
     [/INSERT INTO chat_messages/, []],
     [/FROM fragrances f/, FRAGRANCES],
@@ -56,7 +65,7 @@ function chatRoutes(state: {
   ] as [RegExp, unknown[] | ((params: unknown[]) => unknown[])][];
 }
 
-const firstSlot: Reserve = { conversation_id: CONVERSATION, user_messages: 1, created: true };
+const firstSlot: Reserve = { user_messages: 1 };
 
 function send(app: Parameters<typeof request>[0], body: object, guest: string | null = GUEST) {
   const req = request(app).post("/api/chat");
@@ -212,7 +221,7 @@ describe("POST /api/chat: caps and availability", () => {
     });
     expect(requests).toHaveLength(0);
     // The cap and the 8-message limit both go to the one cap statement.
-    expect(calls[0]!.params.slice(4)).toEqual([true, 3, 8]);
+    expect(calls[0]!.params.slice(3)).toEqual([true, 3, 8]);
   });
 
   it("counts a signed-in visitor as their account, not their guest id", async () => {
@@ -221,7 +230,7 @@ describe("POST /api/chat: caps and availability", () => {
     const cookie = `scense_session=${await signSession(7, auth.jwtSecret, 7)}`;
     await request(app).post("/api/chat").set("Cookie", cookie).set("X-Guest-Id", GUEST).send({ message: "hi" });
     expect(calls[0]!.params[0]).toBe("user:7");
-    expect(calls[0]!.params[4]).toBe(false); // not a guest: the site-wide cap does not apply
+    expect(calls[0]!.params[3]).toBe(false); // not a guest: the site-wide cap does not apply
     expect(calls.some((c) => /INSERT INTO taste_profiles/.test(c.sql))).toBe(true);
   });
 
@@ -274,8 +283,8 @@ describe("POST /api/chat: history and recommendations", () => {
       content: `m${8 - i}`,
     }));
     const { llm, requests } = fakeLlm([modelJson()]);
-    const { app, calls } = appWith(chatRoutes({ reserve: { ...firstSlot, user_messages: 5, created: false }, history }), undefined, aiWith(llm));
-    await send(app, { message: "next" });
+    const { app, calls } = appWith(chatRoutes({ reserve: { user_messages: 5 }, history, ownsChat: true }), undefined, aiWith(llm));
+    await send(app, { message: "next", conversationId: CONVERSATION });
     expect(calls.find((c) => /SELECT role, content/.test(c.sql))!.params).toEqual([CONVERSATION, 8]);
     const sent = requests[0]!.messages;
     expect(sent[0]!.role).toBe("user");
@@ -286,7 +295,7 @@ describe("POST /api/chat: history and recommendations", () => {
     const { llm } = fakeLlm([modelJson({ profile_update: { families: { Fruity: 1, Citrus: 0.5 }, facets: {} } })]);
     // Owned Sauvage matches this profile at 45%; lower the owned bar so it qualifies.
     const ai = aiWith(llm, { ownedMinMatch: 0.4 });
-    const { app } = appWith(chatRoutes({ reserve: { ...firstSlot, user_messages: 8 } }), undefined, ai);
+    const { app } = appWith(chatRoutes({ reserve: { user_messages: 8 } }), undefined, ai);
     const res = await send(app, { message: "last one", owned: [2] });
     // Owned Sauvage (Citrus) first, then Aventus (Fruity), which scores higher than it.
     expect(res.body.recommendations.map((r: { id: number; owned: boolean }) => [r.id, r.owned])).toEqual([
@@ -296,23 +305,88 @@ describe("POST /api/chat: history and recommendations", () => {
   });
 });
 
-describe("GET /api/chat", () => {
-  it("returns today's messages and count, with cards rebuilt from stored ids", async () => {
-    const routes = chatRoutes({ reserve: null, usageRow: true });
+describe("several chats (DECISIONS B36)", () => {
+  it("starts a new chat on a first message without an id, titled from the visitor's words", async () => {
+    const { llm, requests } = fakeLlm([modelJson()]);
+    const { app, calls } = appWith(chatRoutes({ reserve: firstSlot }), undefined, aiWith(llm));
+    const res = await send(app, { message: "  I love   warm spicy woods  " });
+    expect(res.status).toBe(200);
+    expect(res.body.conversation).toMatchObject({ title: "I love warm spicy woods", lastMessageAt: "2026-10-21T15:00:00.000Z" });
+    // A new chat has no history to send, and chats past retention are purged.
+    expect(calls.some((c) => /SELECT role, content FROM chat_messages/.test(c.sql))).toBe(false);
+    expect(calls.some((c) => /DELETE FROM chat_conversations WHERE last_message_at/.test(c.sql))).toBe(true);
+    expect(requests[0]!.messages).toHaveLength(1);
+    // The chat row is written with the messages, after the answer, and owned by the visitor.
+    const stored = calls.find((c) => /WITH conversation AS/.test(c.sql))!;
+    expect(stored.params[5]).toBe(`guest:${GUEST}`);
+    expect(res.body.conversation.id).toBe(stored.params[0]);
+  });
+
+  it("never titles a chat from the model's reply", async () => {
+    const { llm } = fakeLlm([modelJson({ reply: "Woody Amber, like Creed Aventus." })]);
+    const { app, calls } = appWith(chatRoutes({ reserve: firstSlot }), undefined, aiWith(llm));
+    await send(app, { message: "warm woods" });
+    expect(calls.find((c) => /WITH conversation AS/.test(c.sql))!.params[6]).toBe("warm woods");
+  });
+
+  it("refuses to continue a chat that isn't the visitor's, before claiming a message", async () => {
+    const { llm, requests } = fakeLlm([modelJson()]);
+    const { app, calls } = appWith(chatRoutes({ reserve: firstSlot, ownsChat: false }), undefined, aiWith(llm));
+    const res = await send(app, { message: "hi", conversationId: CONVERSATION });
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe("no_chat");
+    expect((await send(app, { message: "hi", conversationId: "not-a-uuid" })).status).toBe(400);
+    expect(calls.some((c) => /INSERT INTO llm_usage/.test(c.sql))).toBe(false);
+    expect(requests).toHaveLength(0);
+  });
+
+  it("GET /api/chat returns the shared budget and the chat list", async () => {
+    const { app } = appWith(chatRoutes({ reserve: null, usageRow: true }), undefined, aiWith(fakeLlm([]).llm));
+    const res = await request(app).get("/api/chat").set("X-Guest-Id", GUEST);
+    expect(res.body).toEqual({
+      available: true,
+      messagesUsed: 8,
+      messagesLimit: 8,
+      conversations: [{
+        id: CONVERSATION, title: "warm spicy woods",
+        createdAt: "2026-10-21T14:00:00.000Z", lastMessageAt: "2026-10-21T15:00:00.000Z",
+      }],
+    });
+  });
+
+  it("GET /api/chat/:id returns one chat, with cards rebuilt from stored ids", async () => {
+    const routes = chatRoutes({ reserve: null, ownsChat: true });
     routes.unshift([/SELECT role, content, recommendations/, [
       { role: "user", content: "spicy", recommendations: null },
       { role: "assistant", content: "Noted.", recommendations: [3] },
     ]]);
     const { app } = appWith(routes, undefined, aiWith(fakeLlm([]).llm));
-    const res = await request(app).get("/api/chat").set("X-Guest-Id", GUEST);
-    expect(res.body).toMatchObject({ available: true, messagesUsed: 8, messagesLimit: 8 });
+    const res = await request(app).get(`/api/chat/${CONVERSATION}`).set("X-Guest-Id", GUEST);
+    expect(res.body.conversation.id).toBe(CONVERSATION);
     expect(res.body.messages[1].recommendations[0]).toMatchObject({ id: 3, name: "Black Opium", dominantFamily: "Woody Amber" });
+  });
+
+  it("GET /api/chat/:id is a 404 for someone else's chat or a malformed id", async () => {
+    const { app } = appWith(chatRoutes({ reserve: null, ownsChat: false }), undefined, aiWith(fakeLlm([]).llm));
+    for (const id of [CONVERSATION, "nope"]) {
+      const res = await request(app).get(`/api/chat/${id}`).set("X-Guest-Id", GUEST);
+      expect(res.status).toBe(404);
+    }
+  });
+
+  it("DELETE /api/chat/:id deletes only the visitor's own chat, and refunds nothing", async () => {
+    const { app, calls } = appWith(chatRoutes({ reserve: null }), undefined, aiWith(fakeLlm([]).llm));
+    const res = await request(app).delete(`/api/chat/${CONVERSATION}`).set("X-Guest-Id", GUEST);
+    expect(res.status).toBe(204);
+    const deleted = calls.find((c) => /DELETE FROM chat_conversations WHERE id/.test(c.sql))!;
+    expect(deleted.params).toEqual([CONVERSATION, `guest:${GUEST}`]);
+    expect(calls.some((c) => /llm_usage/.test(c.sql))).toBe(false);
   });
 
   it("says when the assistant is unavailable, so the page can say so before anyone types", async () => {
     const { app } = appWith(chatRoutes({ reserve: null }), undefined, aiWith(null));
     const res = await request(app).get("/api/chat").set("X-Guest-Id", GUEST);
-    expect(res.body).toMatchObject({ available: false, messagesUsed: 0, messages: [] });
+    expect(res.body).toMatchObject({ available: false, messagesUsed: 0 });
   });
 });
 

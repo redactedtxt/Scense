@@ -2,14 +2,33 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { getState, setStatus, setTasteProfile } from "../lib/guestStore";
 import { describeProfile, emptyProfile, normalizeProfile } from "../lib/tasteProfile";
+import { chatDate } from "../pages/chat/ChatList";
 import { errorResponse, mockApi, renderAt } from "./render";
 
 // The chat page, the taste profile card, and the profile's guest import (M9). The API
 // is mocked, so no request ever reaches the server, let alone Anthropic.
 
 const ana = { id: 1, email: "ana@example.com", displayName: "Ana" };
-const emptyChat = { available: true, messagesUsed: 0, messagesLimit: 8, messages: [] };
-const DISCLAIMER = "You get one chat per day, up to 8 messages. Recommendations come from our catalogue only.";
+const emptyChat = { available: true, messagesUsed: 0, messagesLimit: 8, conversations: [] };
+const DISCLAIMER = "Up to 8 messages a day, shared across all your chats. Recommendations come from our catalogue only.";
+
+// Two saved chats, newest first, as GET /api/chat lists them (DECISIONS B36).
+const CHAT_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const CHAT_B = "bbbbbbbb-0000-4000-8000-000000000002";
+const summary = (id: string, title: string, lastMessageAt: string) => ({ id, title, createdAt: lastMessageAt, lastMessageAt });
+const twoChats = {
+  ...emptyChat,
+  messagesUsed: 5,
+  conversations: [
+    summary(CHAT_B, "fresh citrus for summer", new Date().toISOString()),
+    summary(CHAT_A, "smoky leather and vanilla", "2026-09-14T15:00:00Z"),
+  ],
+};
+const chatWith = (id: string, title: string, messages: { role: string; content: string }[]) => ({
+  conversation: summary(id, title, new Date().toISOString()),
+  messages: messages.map((m) => ({ ...m, recommendations: [] })),
+});
+const newChat = summary("cccccccc-0000-4000-8000-000000000003", "fresh lemony woods", new Date().toISOString());
 
 const profile = (families: Record<string, number>, facets: Record<string, number> = {}, summary: string | null = null) =>
   ({ ...emptyProfile(), ...normalizeProfile({ families, facets, summary })! });
@@ -45,7 +64,7 @@ describe("the chat page", () => {
     const next = profile({ Citrus: 0.52, "Woody Amber": 0.4 }, {}, "You lean toward Citrus scents.");
     const fetchMock = mockApi([
       ["/api/chat", (_url, init) => init?.method === "POST"
-        ? { reply: "Bright Citrus with a woody base.", profile: next, recommendations: [sauvage], degraded: false, messagesUsed: 1, messagesLimit: 8 }
+        ? { conversation: newChat, reply: "Bright Citrus with a woody base.", profile: next, recommendations: [sauvage], degraded: false, messagesUsed: 1, messagesLimit: 8 }
         : emptyChat],
     ]);
     renderAt("/chat");
@@ -58,6 +77,10 @@ describe("the chat page", () => {
 
     const sent = bodyOf(fetchMock, "/api/chat");
     expect(sent).toMatchObject({ message: "fresh lemony woods", owned: [5] });
+    expect(sent).not.toHaveProperty("conversationId"); // a first message starts a new chat
+    // The new chat joins the list, titled from the visitor's words.
+    expect(within(screen.getByRole("navigation", { name: "Your chats" })).getByRole("button", { name: /^fresh lemony woods/ }))
+      .toHaveAttribute("aria-current", "true");
     expect(sent.tasteProfile.families.Citrus).toBe(0.2);
     // The card beside the chat updates from the browser store.
     expect(getState().tasteProfile?.families["Woody Amber"]).toBe(0.4);
@@ -95,19 +118,129 @@ describe("the chat page", () => {
   });
 
   it("closes the input once today's 8 messages are used, and shows the saved conversation", async () => {
-    mockApi([["/api/chat", () => ({
-      ...emptyChat,
-      messagesUsed: 8,
-      messages: [
-        { role: "user", content: "<script>alert(1)</script> smoky", recommendations: [] },
-        { role: "assistant", content: "Smoky Dry Woods.", recommendations: [sauvage] },
-      ],
-    })]]);
-    renderAt("/chat");
-    expect(await screen.findByText(/used today's chat/)).toBeInTheDocument();
+    mockApi([
+      [`/api/chat/${CHAT_A}`, () => ({
+        conversation: twoChats.conversations[1],
+        messages: [
+          { role: "user", content: "<script>alert(1)</script> smoky", recommendations: [] },
+          { role: "assistant", content: "Smoky Dry Woods.", recommendations: [sauvage] },
+        ],
+      })],
+      ["/api/chat", () => ({ ...twoChats, messagesUsed: 8 })],
+    ]);
+    renderAt(`/chat?c=${CHAT_A}`);
+    expect(await screen.findByText(/used today's messages/)).toBeInTheDocument();
+    expect(await screen.findByText("Smoky Dry Woods.")).toBeInTheDocument();
     // A visitor's text is shown as text: the tag is visible, nothing ran.
     expect(screen.getByText("<script>alert(1)</script> smoky")).toBeInTheDocument();
     expect(document.querySelector("main script")).toBeNull();
+  });
+});
+
+describe("several chats (DECISIONS B36)", () => {
+  it("lists chats newest first with a title and date, and opens one with the shared count", async () => {
+    mockApi([
+      [`/api/chat/${CHAT_A}`, () => chatWith(CHAT_A, "smoky leather and vanilla", [
+        { role: "user", content: "smoky leather and vanilla" },
+        { role: "assistant", content: "Smoky Dry Woods with a sweet edge." },
+      ])],
+      ["/api/chat", () => twoChats],
+    ]);
+    renderAt("/chat");
+    const list = await screen.findByRole("navigation", { name: "Your chats" });
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows.map((row) => within(row).getAllByRole("button")[0]!.textContent)).toEqual([
+      "fresh citrus for summerToday",
+      "smoky leather and vanilla" + chatDate("2026-09-14T15:00:00Z"),
+    ]);
+    // A new chat is open: the introduction shows, and the count is the day's.
+    expect(screen.getByRole("heading", { name: "New chat" })).toBeInTheDocument();
+    expect(screen.getByText(/Describe scents you love/)).toBeInTheDocument();
+    expect(screen.getByText(/5 of 8 messages used today/)).toBeInTheDocument();
+
+    await userEvent.click(within(list).getByRole("button", { name: /^smoky leather/ }));
+    expect(await screen.findByText("Smoky Dry Woods with a sweet edge.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "smoky leather and vanilla" })).toBeInTheDocument();
+    expect(screen.getByText(/5 of 8 messages used today/)).toBeInTheDocument();
+  });
+
+  it("continues an open chat with its id, and New chat starts one without", async () => {
+    const reply = (conversation: object, used: number) => ({
+      conversation, reply: "Noted: Citrus.", profile: emptyProfile(), recommendations: [], degraded: false,
+      messagesUsed: used, messagesLimit: 8,
+    });
+    const fetchMock = mockApi([
+      [`/api/chat/${CHAT_B}`, () => chatWith(CHAT_B, "fresh citrus for summer", [{ role: "user", content: "fresh citrus" }])],
+      ["/api/chat", (_url, init) => {
+        if (init?.method !== "POST") return twoChats;
+        const sent = JSON.parse(init.body as string);
+        return sent.conversationId ? reply(twoChats.conversations[0]!, 6) : reply(newChat, 7);
+      }],
+    ]);
+    renderAt(`/chat?c=${CHAT_B}`);
+    await userEvent.type(await screen.findByLabelText("Your message"), "and some grapefruit{Enter}");
+    expect(await screen.findByText(/6 of 8 messages used today/)).toBeInTheDocument();
+    const posts = () => fetchMock.mock.calls.filter(([, init]) => init?.method === "POST").map(([, init]) => JSON.parse(init!.body as string));
+    expect(posts()[0]).toMatchObject({ message: "and some grapefruit", conversationId: CHAT_B });
+
+    await userEvent.click(screen.getByRole("button", { name: "New chat" }));
+    expect(screen.getByRole("heading", { name: "New chat" })).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Your message"), "fresh lemony woods{Enter}");
+    expect(await screen.findByText(/7 of 8 messages used today/)).toBeInTheDocument();
+    expect(posts()[1]).not.toHaveProperty("conversationId");
+    expect(await screen.findByRole("heading", { name: "fresh lemony woods" })).toBeInTheDocument();
+  });
+
+  it("deletes a chat after one confirm, and leaves the count alone", async () => {
+    const fetchMock = mockApi([
+      [`/api/chat/${CHAT_A}`, (_url, init) => (init?.method === "DELETE" ? new Response(null, { status: 204 }) : chatWith(CHAT_A, "smoky leather and vanilla", []))],
+      ["/api/chat", () => twoChats],
+    ]);
+    renderAt(`/chat?c=${CHAT_A}`);
+    const list = await screen.findByRole("navigation", { name: "Your chats" });
+    await userEvent.click(within(list).getByRole("button", { name: "Delete chat: smoky leather and vanilla" }));
+    expect(within(list).getByText("Delete this chat?")).toBeInTheDocument();
+    await userEvent.click(within(list).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(within(list).queryByText("smoky leather and vanilla")).not.toBeInTheDocument());
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).endsWith(`/api/chat/${CHAT_A}`) && init?.method === "DELETE")).toBe(true);
+    // The open chat was the one deleted, so a new chat takes its place (the URL changes a
+    // moment after the list does).
+    expect(await screen.findByRole("heading", { name: "New chat" })).toBeInTheDocument();
+    expect(screen.getByText(/5 of 8 messages used today/)).toBeInTheDocument();
+  });
+
+  it("says so when an opened chat is gone (deleted elsewhere, or expired)", async () => {
+    mockApi([
+      [`/api/chat/${CHAT_A}`, () => errorResponse(404, "no_chat", "gone")],
+      ["/api/chat", () => twoChats],
+    ]);
+    renderAt(`/chat?c=${CHAT_A}`);
+    expect(await screen.findByText(/That chat is gone/)).toBeInTheDocument();
+  });
+
+  it("shows a chat title as text, whatever the visitor typed", async () => {
+    mockApi([["/api/chat", () => ({ ...emptyChat, conversations: [summary(CHAT_A, "<img src=x onerror=alert(1)>", "2026-10-21T15:00:00Z")] })]]);
+    renderAt("/chat");
+    expect(await screen.findByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
+    expect(document.querySelector("main img[src='x']")).toBeNull();
+  });
+
+  it("folds the taste profile behind a button on phones", async () => {
+    mockApi([["/api/chat", () => emptyChat]]);
+    renderAt("/chat");
+    const toggle = await screen.findByRole("button", { name: /Your taste profile/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("dates chats as Today, Yesterday, or a short date", () => {
+    const now = new Date(2026, 9, 21, 12);
+    expect(chatDate(new Date(2026, 9, 21, 1).toISOString(), now)).toBe("Today");
+    expect(chatDate(new Date(2026, 9, 20, 23).toISOString(), now)).toBe("Yesterday");
+    expect(chatDate(new Date(2026, 8, 14).toISOString(), now)).toBe("Sep 14");
+    expect(chatDate(new Date(2025, 8, 14).toISOString(), now)).toBe("Sep 14, 2025");
   });
 });
 

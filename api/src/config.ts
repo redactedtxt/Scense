@@ -27,7 +27,8 @@ const aiSchema = z.object({
   CHAT_HISTORY_TURNS: count(8),
   CHAT_MESSAGE_MAX_CHARS: count(500),
   CHAT_REPLY_MAX_WORDS: count(120),
-  CHAT_RETENTION_DAYS: count(7),
+  // Chats are deleted this many days after their last message (DECISIONS B36).
+  CHAT_RETENTION_DAYS: count(30),
   // An owned bottle is shown as a pick only if it matches the taste profile at least
   // this well (cosine, 0 to 1). Otherwise owning a 41% match would push it to the top.
   CHAT_OWNED_MIN_MATCH: fraction(0.6),
@@ -38,6 +39,9 @@ const aiSchema = z.object({
   CHAT_NAMED_BOTTLE_WEIGHT: fraction(1),
   CHAT_NAMED_MIN_WEIGHT: fraction(0.25),
   CHAT_NAMED_MAX: count(5),
+  // Distinct guests per Toronto day who may use the AI features, not conversations: a
+  // guest's new chats never take another slot (DECISIONS B36). The name predates that and
+  // is kept so the GitHub secret and server .env need no change.
   GUEST_DAILY_CONVERSATION_CAP: count(100),
   // US dollars per million tokens, for the admin report's cost estimate only.
   // claude-haiku-5-5 list prices on 2026-10-21 (prompts up to 100K tokens).

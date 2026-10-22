@@ -1,74 +1,92 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useId, useState } from "react";
+import { useSearchParams } from "react-router";
 import { TasteProfileCard } from "../components/TasteProfileCard";
-import { api, ApiError, type ChatMessage, type ChatState } from "../lib/api";
+import { api, ApiError, type ChatConversation, type ChatMessage, type ChatReply, type ChatState } from "../lib/api";
 import { useOwnedIds } from "../lib/collection";
 import { getState } from "../lib/guestStore";
-import { chatKey, useSession } from "../lib/session";
+import { chatConversationKey, chatKey, useSession } from "../lib/session";
 import { storeChatProfile } from "../lib/taste";
 import { ChatInput } from "./chat/ChatInput";
+import { ChatList } from "./chat/ChatList";
 import { MessageList } from "./chat/MessageList";
 
 export const UNAVAILABLE_TEXT =
   "The assistant is unavailable right now. Everything else on Scense works as usual, so try the chat again later.";
 
+export const CHAT_GONE_TEXT = "That chat is gone. It may have been deleted, or it expired.";
+
+// The chat panel fills the screen under the header: 100dvh, so it shrinks with the
+// mobile browser's toolbars (and with the keyboard on Android, see index.html), minus
+// the header and this page's own vertical padding (12px a side on phones, 20px from
+// 641px). From 901px the grid row takes that height and the panel fills the row.
+const PANEL_HEIGHT =
+  "h-[calc(100dvh-var(--spacing-header-sm)-24px)] sm:h-[calc(100dvh-var(--spacing-header)-40px)] md:h-auto";
+const GRID_HEIGHT = "md:h-[calc(100dvh-var(--spacing-header))] md:grid-rows-[minmax(0,1fr)]";
+
 // /chat (SPEC sections 8 and 11): describe what you like, the AI turns it into a taste
-// profile, and the server recommends from the catalogue. Today's conversation comes
-// from the server, so a reload brings it back (DECISIONS B34).
+// profile, and the server recommends from the catalogue. A visitor keeps several chats
+// (DECISIONS B36); the open one is in the URL (?c=<id>), and no id means a new chat.
 export function ChatPage() {
   const session = useSession();
   return (
     <>
       <title>Chat · Scense</title>
-      <section className="pt-[58px] pb-10 sm:pt-[72px] sm:pb-12">
-        <p className="kicker">Taste chat</p>
-        <h1 className="mt-4 mb-5 font-display text-[54px] leading-[0.88] font-medium tracking-display sm:text-[clamp(54px,6.2vw,88px)]">
-          Say what you <em className="font-normal text-gold-pale">like.</em>
-        </h1>
-        <p className="m-0 max-w-[485px] font-display text-lg leading-[1.45] text-soft sm:text-xl">
-          Describe scents you love and ones you can't stand, in your own words. The assistant turns them into a taste
-          profile, and Scense picks bottles from its catalogue to match.
-        </p>
-      </section>
-      <div className="grid gap-10 pb-24 md:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] md:items-start md:gap-[4vw]">
-        {/* Wait for the session: the conversation belongs to the account or the guest. */}
-        {session.loading ? <Loading /> : <Conversation userId={session.user?.id ?? null} />}
-        <div className="md:sticky md:top-6">
-          <TasteProfileCard />
-        </div>
-      </div>
+      {/* Wait for the session: the chats belong to the account or the guest. */}
+      {session.loading ? <Loading /> : <Workspace userId={session.user?.id ?? null} />}
     </>
   );
 }
 
+// Takes the panel's full height, so the footer doesn't jump when the panel arrives.
 function Loading() {
   return (
-    <p role="status" className="m-0 font-display text-xl text-soft">
-      Loading today's chat…
+    <p
+      role="status"
+      className="m-0 min-h-[calc(100dvh-var(--spacing-header-sm))] py-10 font-display text-xl text-soft sm:min-h-[calc(100dvh-var(--spacing-header))]"
+    >
+      Loading your chats…
     </p>
   );
 }
 
-function Conversation({ userId }: { userId: number | null }) {
+type Pending = { chatId: string | null; text: string };
+
+function Workspace({ userId }: { userId: number | null }) {
   const client = useQueryClient();
-  const key = chatKey(userId);
-  const chat = useQuery({ queryKey: key, queryFn: api.chat, staleTime: Infinity });
+  const [params, setParams] = useSearchParams();
+  const activeId = params.get("c");
+  const list = useQuery({ queryKey: chatKey(userId), queryFn: api.chat, staleTime: Infinity });
   const owned = useOwnedIds();
-  const [pending, setPending] = useState<string | null>(null);
+  // The one message in flight, and the chat it went to (the server takes one at a time).
+  const [pending, setPending] = useState<Pending | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Set by a 429 (today's chat used, or the guest cap): the input stays closed.
+  // Set by a 429 (today's messages used, or the guest cap): the input stays closed.
   const [closed, setClosed] = useState<string | null>(null);
+  const [listOpen, setListOpen] = useState(false);
+
+  function openChat(id: string | null) {
+    setParams(id ? { c: id } : {});
+    setError(null);
+    setListOpen(false);
+  }
 
   async function send(message: string): Promise<boolean> {
-    setPending(message);
+    const chatId = activeId;
+    setPending({ chatId, text: message });
     setError(null);
     try {
       // A guest's profile and Own list live in the browser, so they travel with the
       // message; a user's are read from the account by the server.
-      const body = userId === null ? { message, tasteProfile: getState().tasteProfile, owned } : { message };
-      const reply = await api.sendChat(body);
+      const guest = userId === null ? { tasteProfile: getState().tasteProfile, owned } : {};
+      const reply = await api.sendChat({ message, conversationId: chatId ?? undefined, ...guest });
       storeChatProfile(client, userId !== null, reply.profile);
-      client.setQueryData<ChatState>(key, (old) => appendExchange(old, message, reply));
+      storeReply(client, userId, message, reply);
+      // A new chat now has an id. Put it in the URL, unless the visitor has meanwhile
+      // opened another chat.
+      if (chatId === null) {
+        setParams((now) => (now.get("c") ? now : new URLSearchParams({ c: reply.conversation.id })), { replace: true });
+      }
       return true;
     } catch (err) {
       handleSendError(err);
@@ -83,41 +101,201 @@ function Conversation({ userId }: { userId: number | null }) {
       setClosed(err.message);
     } else if (err instanceof ApiError && err.status === 503) {
       setError(UNAVAILABLE_TEXT);
+    } else if (err instanceof ApiError && err.code === "no_chat") {
+      setError(CHAT_GONE_TEXT);
+      void client.invalidateQueries({ queryKey: chatKey(userId) });
     } else {
       setError(err instanceof ApiError && err.status < 500 ? err.message : "That didn't send. Try again in a moment.");
     }
   }
 
-  if (chat.isPending) return <Loading />;
-  // If even loading the chat fails, the API or database is down: say the friendly thing.
-  const state = chat.data ?? { available: false, messagesUsed: 0, messagesLimit: 8, messages: [] };
+  async function deleteChat(id: string) {
+    await api.deleteChat(id);
+    client.setQueryData<ChatState>(chatKey(userId), (old) =>
+      old ? { ...old, conversations: old.conversations.filter((c) => c.id !== id) } : old,
+    );
+    client.removeQueries({ queryKey: chatConversationKey(userId, id) });
+    if (id === activeId) openChat(null);
+  }
+
+  if (list.isPending) return <Loading />;
+  // If even the list fails to load, the API or database is down: say the friendly thing.
+  const state = list.data ?? { available: false, messagesUsed: 0, messagesLimit: 8, conversations: [] };
   const used = state.messagesUsed >= state.messagesLimit;
-  const closedText = !state.available ? UNAVAILABLE_TEXT : (closed ?? (used ? "You've used today's chat. Come back tomorrow for another." : null));
+  const closedText = !state.available
+    ? UNAVAILABLE_TEXT
+    : (closed ?? (used ? "You've used today's messages. Come back tomorrow for more; your chats stay here to read." : null));
+  const activeTitle = state.conversations.find((c) => c.id === activeId)?.title ?? (activeId ? "Chat" : "New chat");
 
   return (
-    <section aria-label="Chat" className="min-w-0">
-      <MessageList messages={state.messages} pending={pending} showHint={closedText === null} />
-      {error && (
-        <p role="alert" className="m-0 mb-4 border-l-2 border-gold-line pl-3 text-[13px] leading-snug text-chip-on-text">
-          {error}
-        </p>
-      )}
-      <ChatInput
-        onSend={send}
-        busy={pending !== null}
-        closedText={closedText}
-        used={state.messagesUsed}
-        limit={state.messagesLimit}
-      />
-    </section>
+    <div className={`grid gap-6 py-3 sm:py-5 md:grid-cols-[minmax(0,1fr)_minmax(270px,330px)] md:gap-8 ${GRID_HEIGHT}`}>
+      <section
+        aria-label="Chat"
+        className={`relative flex min-h-[420px] min-w-0 flex-col border border-line-strong bg-panel md:min-h-0 xl:grid xl:grid-cols-[230px_minmax(0,1fr)] xl:grid-rows-[minmax(0,1fr)] ${PANEL_HEIGHT}`}
+      >
+        <ChatList
+          chats={state.conversations}
+          activeId={activeId}
+          open={listOpen}
+          busyChatId={pending ? (pending.chatId ?? "") : null}
+          onOpen={openChat}
+          onClose={() => setListOpen(false)}
+          onDelete={deleteChat}
+        />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <PanelBar
+            title={activeTitle}
+            chatCount={state.conversations.length}
+            listOpen={listOpen}
+            onToggleList={() => setListOpen((open) => !open)}
+            onNewChat={() => openChat(null)}
+            newChatDisabled={activeId === null}
+          />
+          {activeId === null ? (
+            <MessageList
+              key="new"
+              messages={[]}
+              pending={pending?.chatId === null ? pending.text : null}
+              showHint={closedText === null}
+            />
+          ) : (
+            <OpenChat key={activeId} userId={userId} id={activeId} pending={pending} showHint={closedText === null} />
+          )}
+          <div className="shrink-0 px-4 pb-4 sm:px-6 sm:pb-5">
+            {error && (
+              <p role="alert" className="m-0 mb-3 border-l-2 border-gold-line pl-3 text-[13px] leading-snug text-chip-on-text">
+                {error}
+              </p>
+            )}
+            <ChatInput
+              onSend={send}
+              busy={pending !== null}
+              closedText={closedText}
+              used={state.messagesUsed}
+              limit={state.messagesLimit}
+            />
+          </div>
+        </div>
+      </section>
+      <ProfileColumn />
+    </div>
   );
 }
 
-function appendExchange(old: ChatState | undefined, message: string, reply: Awaited<ReturnType<typeof api.sendChat>>): ChatState {
-  const base = old ?? { available: true, messagesUsed: 0, messagesLimit: reply.messagesLimit, messages: [] };
+// One saved chat's messages, loaded when it is opened.
+function OpenChat({ userId, id, pending, showHint }: { userId: number | null; id: string; pending: Pending | null; showHint: boolean }) {
+  const chat = useQuery({
+    queryKey: chatConversationKey(userId, id),
+    queryFn: () => api.chatConversation(id),
+    staleTime: Infinity,
+  });
+  if (chat.isPending) {
+    return (
+      <p role="status" className="m-0 flex-1 px-4 py-6 font-display text-lg text-soft sm:px-6">
+        Loading this chat…
+      </p>
+    );
+  }
+  if (chat.isError) {
+    const gone = chat.error instanceof ApiError && chat.error.status === 404;
+    return (
+      <p role="status" className="m-0 flex-1 px-4 py-6 font-display text-lg leading-snug text-soft sm:px-6">
+        {gone ? `${CHAT_GONE_TEXT} Start a new chat to keep going.` : "This chat didn't load. Try again in a moment."}
+      </p>
+    );
+  }
+  return (
+    <MessageList messages={chat.data.messages} pending={pending?.chatId === id ? pending.text : null} showHint={showHint} />
+  );
+}
+
+// The strip across the top of the panel: the open chat's title, "New chat", and below
+// 1280px the button that opens the chat list over the conversation.
+function PanelBar({
+  title,
+  chatCount,
+  listOpen,
+  onToggleList,
+  onNewChat,
+  newChatDisabled,
+}: {
+  title: string;
+  chatCount: number;
+  listOpen: boolean;
+  onToggleList: () => void;
+  onNewChat: () => void;
+  newChatDisabled: boolean;
+}) {
+  const buttonStyle =
+    "h-[34px] shrink-0 cursor-pointer border border-line-control px-3 text-[10px] font-semibold tracking-label text-muted uppercase transition-colors hover:border-gold-deep hover:text-text-bright disabled:cursor-default disabled:opacity-50";
+  return (
+    <div className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3 sm:px-6">
+      <button
+        type="button"
+        onClick={onToggleList}
+        aria-expanded={listOpen}
+        aria-controls="chat-list"
+        className={`${buttonStyle} xl:hidden`}
+      >
+        Chats{chatCount > 0 ? ` (${chatCount})` : ""}
+      </button>
+      <div className="min-w-0 flex-1">
+        <p className="kicker text-[9px]">Taste chat</p>
+        <h1 className="m-0 mt-1 truncate font-display text-[21px] leading-tight font-medium" title={title}>
+          {title}
+        </h1>
+      </div>
+      <button type="button" onClick={onNewChat} disabled={newChatDisabled} className={buttonStyle}>
+        New chat
+      </button>
+    </div>
+  );
+}
+
+// The taste profile is shared by every chat. From 901px it sits beside the panel and
+// scrolls on its own; on phones it sits below the panel, folded away until asked for.
+function ProfileColumn() {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <div className="md:min-h-0 md:overflow-y-auto">
+      <button
+        type="button"
+        onClick={() => setOpen((now) => !now)}
+        aria-expanded={open}
+        aria-controls={id}
+        className="flex w-full cursor-pointer items-center justify-between border border-line-strong bg-panel px-5 py-4 text-left md:hidden"
+      >
+        <span className="kicker">Your taste profile</span>
+        <span aria-hidden="true" className="text-gold-icon">
+          {open ? "−" : "+"}
+        </span>
+      </button>
+      <div id={id} className={`${open ? "block" : "hidden"} mt-3 md:mt-0 md:block`}>
+        <TasteProfileCard />
+      </div>
+    </div>
+  );
+}
+
+// Puts a reply in the cache: both messages into its chat, and the chat to the top of the
+// list with the day's new count, so nothing needs refetching.
+function storeReply(client: QueryClient, userId: number | null, message: string, reply: ChatReply) {
   const added: ChatMessage[] = [
     { role: "user", content: message, recommendations: [] },
     { role: "assistant", content: reply.reply, recommendations: reply.recommendations },
   ];
-  return { ...base, messagesUsed: reply.messagesUsed, messagesLimit: reply.messagesLimit, messages: [...base.messages, ...added] };
+  client.setQueryData<ChatConversation>(chatConversationKey(userId, reply.conversation.id), (old) => ({
+    conversation: reply.conversation,
+    messages: [...(old?.messages ?? []), ...added],
+  }));
+  client.setQueryData<ChatState>(chatKey(userId), (old) => {
+    const others = (old?.conversations ?? []).filter((c) => c.id !== reply.conversation.id);
+    return {
+      available: old?.available ?? true,
+      messagesUsed: reply.messagesUsed,
+      messagesLimit: reply.messagesLimit,
+      conversations: [reply.conversation, ...others],
+    };
+  });
 }

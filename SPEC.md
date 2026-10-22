@@ -54,7 +54,7 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 ├── .github/workflows/
 │   ├── ci.yml
 │   └── deploy.yml
-├── db/migrations/                # 001_init.sql, 002_search_aliases.sql, 003_accounts.sql, 004_reviews.sql, 005_chat.sql, 006_chat_named_bottles.sql
+├── db/migrations/                # 001_init.sql, 002_search_aliases.sql, 003_accounts.sql, 004_reviews.sql, 005_chat.sql, 006_chat_named_bottles.sql, 007_multi_chat.sql
 ├── pipeline/
 │   ├── raw/                      # Kaggle files, gitignored
 │   ├── config/
@@ -402,6 +402,24 @@ Migration `006_chat_named_bottles.sql` (M9 fixes; DECISIONS B35): the ids of bot
 ALTER TABLE chat_messages ADD COLUMN named_fragrances INTEGER[];
 ```
 
+Migration `007_multi_chat.sql` (multiple chats; DECISIONS B36): a visitor keeps several chats. `llm_usage` stays the daily budget and token ledger, and its `UNIQUE (subject, feature, day)` key is unchanged, because the 8 messages are one budget per subject per day across all chats. The conversation moves to its own table.
+
+```sql
+CREATE TABLE chat_conversations (
+  id UUID PRIMARY KEY,
+  subject TEXT NOT NULL,                  -- 'user:<id>' or 'guest:<uuid>', the owner
+  title TEXT NOT NULL,                    -- the visitor's first message, trimmed; never the model's text
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_message_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX chat_conversations_subject_idx ON chat_conversations (subject, last_message_at DESC);
+CREATE INDEX chat_conversations_last_idx ON chat_conversations (last_message_at);
+-- Backfill: every stored transcript becomes a chat owned by its llm_usage subject.
+ALTER TABLE chat_messages ADD CONSTRAINT chat_messages_conversation_fk
+  FOREIGN KEY (conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE;
+ALTER TABLE llm_usage ALTER COLUMN conversation_id DROP NOT NULL;  -- unused; dropped later (section 13, M11)
+```
+
 ---
 
 ## 6. Guest mode
@@ -446,9 +464,11 @@ All responses JSON. Validate every body and query with Zod. Errors return `{ err
 | GET/PUT/DELETE | `/api/collection/:fragranceId` | status own or want |
 | POST | `/api/collection/import` | Guest import on sign-in: `{ items, tasteProfile? }`. The taste profile only fills an account that has none (M9; DECISIONS B34) |
 | GET/PUT | `/api/profile/taste` | Read and edit the taste profile |
-| GET | `/api/chat` | Today's conversation, `messagesUsed`, `messagesLimit`, and `available` (false without an API key), so a reload restores the chat (M9; DECISIONS B34) |
-| POST | `/api/chat` | See section 8 |
-| GET | `/api/admin/usage?days=` | Section 10. `X-Admin-Token` header; 404 when `ADMIN_TOKEN` is blank |
+| GET | `/api/chat` | The visitor's chats (`conversations`: id, title, createdAt, lastMessageAt; most recently used first), today's shared `messagesUsed` and `messagesLimit`, and `available` (false without an API key) (M9; DECISIONS B34, B36) |
+| GET | `/api/chat/:id` | One chat's messages, with recommendation cards rebuilt from stored ids. 404 `no_chat` for someone else's chat, a deleted or expired one, or a malformed id (DECISIONS B36) |
+| POST | `/api/chat` | See section 8. `{ message, conversationId? }`: no id starts a new chat, created only once its first message is answered; the response carries `conversation` |
+| DELETE | `/api/chat/:id` | Deletes the visitor's own chat and its messages; 204 either way. Gives no messages back (DECISIONS B36) |
+| GET | `/api/admin/usage?days=` | Section 10. Per day: distinct visitors, distinct guests, chats started, messages, tokens, estimated cost. `X-Admin-Token` header; 404 when `ADMIN_TOKEN` is blank |
 | POST | `/api/concierge` | See section 9 |
 | GET/POST/PUT/DELETE | `/api/fragrances/:id/reviews` | One review per user per fragrance: 1 to 5 stars, text up to 2,000 characters, plain text only. GET is public, 10 per page newest first, plus the viewer's own review as `mine`. PUT and DELETE act on the caller's own review. Writes are rate-limited per user (DECISIONS B33) |
 | GET | `/api/pair-ratings?baseId=&goal=` | The user's ratings for one result list, so cards show them on return (M8; DECISIONS B33) |
@@ -479,14 +499,16 @@ Flow per user message:
 ```
 
 4. Merge: new weight = clamp(0.6 × old + 0.4 × update, -1, 1). Save to `taste_profiles` (users) or return it to the client (guests).
-5. When `ready_to_recommend` is true, `recommend.ts` scores every fragrance: cosine similarity between the taste vector (14 families + 6 facets) and the fragrance vector (profile + facets). Return up to 3 owned matches first, then up to 3 non-owned matches that score higher than the best owned match. An owned bottle counts only if it matches at least `CHAT_OWNED_MIN_MATCH` (0.6); bottles the visitor named in that day's conversation are never picked (DECISIONS B35).
+5. When `ready_to_recommend` is true, `recommend.ts` scores every fragrance: cosine similarity between the taste vector (14 families + 6 facets) and the fragrance vector (profile + facets). Return up to 3 owned matches first, then up to 3 non-owned matches that score higher than the best owned match. An owned bottle counts only if it matches at least `CHAT_OWNED_MIN_MATCH` (0.6); bottles the visitor named anywhere in that chat are never picked (DECISIONS B35, B36).
 6. The UI shows the reply, the recommendation cards, and the updated taste profile card.
 
 Untrusted input (M9; DECISIONS B34): before a reply or summary is shown, the server caps it at 120 words and replaces it with a reply built from the profile numbers if it names any catalogue fragrance, brand, or brand alias, contains a link, or mentions no family, facet, note, or scent word. A guest's profile reaches the model as numbers only. If the Anthropic call fails, the message is refunded and the chat says the assistant is unavailable; two invalid answers in a row return a friendly apology and count the message.
 
+Several chats (DECISIONS B36): a visitor can start a new chat at any time without deleting earlier ones, and reopen and continue any of them. Each chat has its own history for the model (the last 8 messages) and its own list of excluded named bottles. The taste profile is shared by every chat, and so is the day's message budget (section 10). A chat's title is the visitor's first message, whitespace collapsed and cut at a word break to at most 60 characters; it never comes from the model's text. Chats are deleted 30 days after their last message (`CHAT_RETENTION_DAYS`), and the visitor (guest or user) can delete one at any time; deleting gives no messages back.
+
 Named bottles and reply rules (DECISIONS B35): names in `mentioned_fragrances` that the visitor really typed are looked up with the catalogue search (aliases and typo fallback). Liked ones are blended in as a strong profile update. The reply starts with a server sentence saying how many were found, never which. When picks are shown, a closing offer of picks is replaced by a lead-in. The reply never mentions its own rules: such sentences are removed, and the guard checks for them.
 
-The disclaimer under the input: "You get one chat per day, up to 8 messages. Recommendations come from our catalogue only."
+The disclaimer under the input: "Up to 8 messages a day, shared across all your chats. Recommendations come from our catalogue only."
 
 ---
 
@@ -509,8 +531,8 @@ Same cap and disclaimer pattern as the chatbot.
 
 ## 10. AI caps and cost controls
 
-- Each subject (`user:<id>` or `guest:<uuid>`) gets **one conversation per feature per day**, up to **8 user messages**. The day resets at midnight America/Toronto.
-- Site-wide backstop: `GUEST_DAILY_CONVERSATION_CAP` (default 100) total guest conversations per day across both features. Over the cap, guests see "Today's guest demos are used up. Sign up or come back tomorrow."
+- Each subject (`user:<id>` or `guest:<uuid>`) gets **8 user messages per feature per day**, one shared budget across all of that feature's chats. New chats are free; messages are what count. The day resets at midnight America/Toronto. The counter reads "X of 8 messages used today" whichever chat is open. The slot is claimed atomically before the model is called, so two quick messages, in the same chat or in two chats, can't both become message 8 (DECISIONS B36).
+- Site-wide backstop: `GUEST_DAILY_CONVERSATION_CAP` (default 100) **distinct guests** per day across both features. A guest already counted today never takes a second slot, however many chats they open. (The variable's name predates this and is kept so the secret needs no change.) Over the cap, guests see "Today's guest demos are used up. Sign up or come back tomorrow."
 - `max_tokens` 400 per call. Trim conversation history to the last 8 turns.
 - Log tokens in `llm_usage`. Add `GET /api/admin/usage` behind an `ADMIN_TOKEN` header for Tejas.
 
@@ -525,11 +547,13 @@ Pages:
 | `/` | Pairing. Tabs: Notes or Fragrance. Goal toggle: Enhance or Soften. Results list with score bars, "Owned" badges, an "Owned only" filter, and a search box that jumps to any fragrance's rank. The page opens with nothing selected: an empty search box and a short prompt in the results area. A shared `?f=<slug>` link still preloads that fragrance |
 | `/browse` | Catalogue grid with search, gender and family filters, and a sort control (Most popular, the default; Least popular; Highest rated). Search, filters, sort, and page live in the URL; the default sort stays out of it |
 | `/f/:slug` | Fragrance page: pyramid, accords as bars, family profile as a small wheel chart, strength, tags, rating, Want/Own buttons, reviews (pass 2), "Pair this" button |
-| `/chat` | Chatbot with the taste profile card beside it |
+| `/chat` | Chatbot: a chat panel, a chat list, and the taste profile card (layout below). The open chat is in the URL (`?c=<id>`); no id is a new chat |
 | `/concierge` | Concierge chat with question chips |
 | `/me` | Collection tabs (Own, Want) and the editable taste profile card |
 | `/about` | How the scoring works: the wheel, ring distance, Enhance vs Soften, with a diagram. Recruiters read this page |
 | `/login`, `/signup` | Pass 2 |
+
+Chat layout (DECISIONS B36): the conversation is its own panel with a fixed height that fills the screen below the header (`100dvh` minus the header, so mobile browser toolbars and the Android keyboard don't break it; the viewport meta sets `interactive-widget=resizes-content`). Messages scroll inside the panel, separately from the page, and the message box stays pinned at its bottom; the page never grows with the chat. New messages scroll into view unless the visitor has scrolled up, when a "New messages" button offers to jump down; sending always scrolls down. The panel has a top bar with the chat's title and "New chat". The chat list is the panel's left column from 1280px and a drawer opened by a "Chats" button below that. From 901px the taste profile card sits beside the panel and scrolls on its own; below 901px the panel fills the screen and the card sits under it, folded behind a "Your taste profile" button.
 
 Taste profile card: top 3 positive families and facets in plain words, top 2 negatives, the summary line, and an Edit mode with sliders from -1 to 1. Saving updates storage or the API.
 
@@ -630,8 +654,11 @@ Stop after each one. Report: what you built, files to read first, commands to ru
 | M7 | Accounts, collection API, and guest import | Signup, login, logout, import; a signed-in user's Own and Want save to the account; auth and rate-limit tests pass; a reseed keeps user data (tested). The collection API moved here from M8 so the site never shows sign-in with browser-only saves (DECISIONS B31) |
 | M8 | Reviews and pair ratings | Guests blocked; one review per user per fragrance |
 | M9 | Chatbot, taste profile card, caps | Cap enforced at message 9 and at the guest site-wide cap; JSON validation tested with mocked LLM responses |
+| M9.1 | Chat layout and multiple chats | Fixed-height chat panel at desktop and 375px; New chat, chat list, reopen and delete; one shared 8-message budget per day across chats; the guest cap counts guests; tests for the shared budget, the guest count, and the race across two chats pass (DECISIONS B36) |
 | M10 | Concierge | Asks for missing slots; empty-collection fallback works |
 | M11 | Polish | Playwright smoke tests (pair a fragrance, chat once, concierge once); README skeleton with setup steps; Lighthouse accessibility ≥ 90 |
+
+**TODO (M11):** add a migration that drops `llm_usage.conversation_id`. Migration 007 only made it nullable, so the old API container could keep writing it during the 007 deploy; nothing reads or writes it since (DECISIONS B36). Drop it once 007 has been live through at least one deploy, and remove the column from section 5's `001_init.sql` listing at the same time.
 
 ---
 

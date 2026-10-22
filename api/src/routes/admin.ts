@@ -22,11 +22,12 @@ export function adminRouter(db: Db, ai: AiSettings, now: () => number = Date.now
     const today = torontoDay(now());
     // The last `days` days, and separately this calendar month (Toronto), which is what
     // Anthropic's monthly spend limit compares against.
-    const perDay = (await usageByDay(db, "day > $1::date - $2::int", [today, days])).map((r) => withCost(r, ai));
-    const month = (await usageByDay(db, "day >= date_trunc('month', $1::date)", [today])).map((r) => withCost(r, ai));
+    const perDay = (await usageByDay(db, "u.day > $1::date - $2::int", [today, days])).map((r) => withCost(r, ai));
+    const month = (await usageByDay(db, "u.day >= date_trunc('month', $1::date)", [today])).map((r) => withCost(r, ai));
     res.json({
       model: ai.model,
       today,
+      // Distinct guests per day, despite the name (kept for the existing secret).
       guestDailyConversationCap: ai.guestDailyConversationCap,
       pricesUsdPerMillionTokens: { input: ai.inputUsdPerMTok, output: ai.outputUsdPerMTok },
       monthToDate: total(month),
@@ -38,17 +39,24 @@ export function adminRouter(db: Db, ai: AiSettings, now: () => number = Date.now
 }
 
 // `where` is one of the two fixed strings above, never request text.
+// Per day (DECISIONS B36): distinct visitors and distinct guests who used an AI feature
+// (the guest cap counts the second), chats started, messages, and tokens. Chats started
+// are counted from chat_conversations, so days older than CHAT_RETENTION_DAYS undercount
+// as their chats are deleted; the other columns come from llm_usage, which keeps no text
+// and is never purged.
 async function usageByDay(db: Db, where: string, params: unknown[]) {
   const { rows } = await db.query(
-    `SELECT day::text AS day,
-            count(*)::int AS conversations,
-            count(*) FILTER (WHERE subject LIKE 'guest:%')::int AS guest_conversations,
-            sum(user_messages)::int AS user_messages,
-            sum(input_tokens)::bigint AS input_tokens,
-            sum(output_tokens)::bigint AS output_tokens
-       FROM llm_usage
+    `SELECT u.day::text AS day,
+            count(DISTINCT u.subject)::int AS visitors,
+            count(DISTINCT u.subject) FILTER (WHERE u.subject LIKE 'guest:%')::int AS guests,
+            (SELECT count(*) FROM chat_conversations c
+              WHERE (c.created_at AT TIME ZONE 'America/Toronto')::date = u.day)::int AS chats_started,
+            sum(u.user_messages)::int AS user_messages,
+            sum(u.input_tokens)::bigint AS input_tokens,
+            sum(u.output_tokens)::bigint AS output_tokens
+       FROM llm_usage u
       WHERE ${where}
-      GROUP BY day ORDER BY day DESC`,
+      GROUP BY u.day ORDER BY u.day DESC`,
     params,
   );
   return rows;
@@ -59,8 +67,9 @@ function withCost(r: Record<string, unknown>, ai: AiSettings) {
   const outputTokens = Number(r.output_tokens);
   return {
     day: r.day as string,
-    conversations: r.conversations as number,
-    guestConversations: r.guest_conversations as number,
+    visitors: r.visitors as number,
+    guests: r.guests as number,
+    chatsStarted: r.chats_started as number,
     userMessages: r.user_messages as number,
     inputTokens,
     outputTokens,
@@ -73,7 +82,8 @@ type DayUsage = ReturnType<typeof withCost>;
 function total(days: DayUsage[]) {
   const sum = (pick: (d: DayUsage) => number) => days.reduce((acc, d) => acc + pick(d), 0);
   return {
-    conversations: sum((d) => d.conversations),
+    // Visitors aren't summed: one person on three days is not three visitors.
+    chatsStarted: sum((d) => d.chatsStarted),
     userMessages: sum((d) => d.userMessages),
     inputTokens: sum((d) => d.inputTokens),
     outputTokens: sum((d) => d.outputTokens),
