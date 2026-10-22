@@ -47,7 +47,7 @@ describe("taste profile merge (SPEC section 8 step 4)", () => {
 });
 
 const entry = (id: number, name: string, brand: string, family: number, facets = [0, 0, 0, 0, 0, 0]): CatalogueEntry => ({
-  id, slug: `s${id}`, name, brand, imageUrl: null, dominantFamily: "x", vector: [...profileAt(family), ...facets],
+  id, slug: `s${id}`, name, brand, imageUrl: null, dominantFamily: "x", vector: [...profileAt(family), ...facets], seasons: {}, daynight: {}, strength: 2,
 });
 
 const snapshot: CatalogueSnapshot = {

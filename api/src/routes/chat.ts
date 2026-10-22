@@ -1,28 +1,29 @@
 import { randomUUID } from "node:crypto";
-import { Router, type Response } from "express";
+import { Router } from "express";
 import { z } from "zod";
 import type { AiSettings, AuthSettings } from "../config.js";
 import type { Db } from "../db.js";
 import { optionalUser } from "../middleware/auth.js";
 import { ApiError } from "../middleware/errors.js";
-import { guestIdOf } from "../middleware/guest.js";
+import { requireSubject } from "../middleware/guest.js";
 import { parseInput } from "../middleware/validate.js";
-import { addTokens, refundMessage, reserveMessage, subjectOf, todaysUsage, torontoDay } from "../services/caps.js";
+import { addTokens, refundMessage, reserveMessage, todaysUsage, torontoDay } from "../services/caps.js";
 import {
   deleteConversation,
   findConversation,
   listConversations,
   purgeExpiredConversations,
-  titleFrom,
+  recentHistory,
+  storeExchange,
   type ConversationSummary,
 } from "../services/conversations.js";
 import type { CatalogueCache, CatalogueSnapshot } from "../services/catalogueCache.js";
 import { askModel, composeTurn, CONFUSED_REPLY, finishReply, type Turn } from "../services/chat.js";
-import type { Llm, LlmMessage } from "../services/llm.js";
+import type { Llm } from "../services/llm.js";
 import { matchNamedBottles, namedBottlesNote, namedBottlesUpdate, type NamedBottles } from "../services/namedBottles.js";
-import { loadProfile, saveProfile } from "../services/profileStore.js";
+import { loadProfile, ownedIds, saveProfile } from "../services/profileStore.js";
 import { buildSystemPrompt } from "../services/prompt.js";
-import { recommend, type Recommendation } from "../services/recommend.js";
+import { cardsFor, recommend, type Recommendation } from "../services/recommend.js";
 import { createReplyGuard } from "../services/replyGuard.js";
 import { completeProfile, emptyProfile, isBlank, profileInput, type TasteProfile } from "../services/taste.js";
 
@@ -85,7 +86,7 @@ export function chatRouter(deps: ChatDeps): Router {
       available: deps.llm !== null,
       messagesUsed: usage?.userMessages ?? 0,
       messagesLimit: deps.ai.maxUserMessages,
-      conversations: await listConversations(deps.db, subject),
+      conversations: await listConversations(deps.db, subject, FEATURE),
     });
   });
 
@@ -99,7 +100,7 @@ export function chatRouter(deps: ChatDeps): Router {
   // No refund: the budget is counted in llm_usage, which holds no text and isn't touched.
   router.delete("/chat/:id", async (req, res) => {
     const subject = requireSubject(req, res);
-    if (chatId.safeParse(req.params.id).success) await deleteConversation(deps.db, subject, req.params.id);
+    if (chatId.safeParse(req.params.id).success) await deleteConversation(deps.db, subject, req.params.id, FEATURE);
     res.status(204).end();
   });
 
@@ -119,13 +120,6 @@ export function chatRouter(deps: ChatDeps): Router {
   return router;
 }
 
-// 'user:<id>' for a signed-in visitor, 'guest:<uuid>' from X-Guest-Id otherwise.
-function requireSubject(req: Parameters<typeof guestIdOf>[0], res: Response): string {
-  const subject = subjectOf(res.locals.userId as number | null, guestIdOf(req));
-  if (subject === null) throw new ApiError(400, "missing_guest_id", "Reload the page and try again.");
-  return subject;
-}
-
 type PostBody = {
   message: string;
   conversationId?: string;
@@ -136,9 +130,9 @@ type PostBody = {
 // The visitor's own chat, or a 404 for a malformed id, someone else's chat, or a chat
 // that was deleted or expired.
 async function ownConversation(db: Db, subject: string, id: string): Promise<ConversationSummary> {
-  const conversation = chatId.safeParse(id).success ? await findConversation(db, subject, id) : null;
-  if (conversation === null) throw NO_CHAT;
-  return conversation;
+  const found = chatId.safeParse(id).success ? await findConversation(db, subject, id, FEATURE) : null;
+  if (found === null) throw NO_CHAT;
+  return found.summary;
 }
 
 // One user message, start to finish: claim a slot, ask the model, check its answer,
@@ -195,10 +189,9 @@ async function handleMessage(deps: ChatDeps, llm: Llm, subject: string, userId: 
 
   const conversation = await storeExchange(
     db,
-    { id: conversationId, subject },
+    { id: conversationId, subject, feature: FEATURE },
     { message: body.message, named: named.matched },
-    reply,
-    recommendations,
+    { content: reply, recommendations: recommendations.map((r) => r.id) },
   );
   return {
     conversation,
@@ -241,59 +234,6 @@ function guestProfile(body: PostBody): TasteProfile {
   return body.tasteProfile ? completeProfile(body.tasteProfile) : emptyProfile();
 }
 
-// The last `turns` messages, oldest first (SPEC section 10). The model needs no more:
-// the taste profile in the system prompt already carries what earlier turns taught it.
-// A history must start with a user message, so a leading assistant one is dropped.
-async function recentHistory(db: Db, conversationId: string, turns: number): Promise<LlmMessage[]> {
-  if (turns === 0) return [];
-  const { rows } = await db.query(
-    `SELECT role, content FROM chat_messages WHERE conversation_id = $1 ORDER BY seq DESC LIMIT $2`,
-    [conversationId, turns],
-  );
-  const history = rows.reverse().map((r) => ({ role: r.role, content: r.content }) as LlmMessage);
-  return history[0]?.role === "assistant" ? history.slice(1) : history;
-}
-
-// Both sides of the exchange, in one statement. A new chat's row is created here, after
-// its first message was answered, titled from that message; an existing chat's row only
-// moves its last_message_at. The user row keeps the ids of bottles they named, so later
-// picks in the chat can leave them out.
-async function storeExchange(
-  db: Db,
-  chat: { id: string; subject: string },
-  user: { message: string; named: number[] },
-  reply: string,
-  recs: Recommendation[],
-): Promise<ConversationSummary> {
-  const { rows } = await db.query(
-    `WITH conversation AS (
-       INSERT INTO chat_conversations (id, subject, title) VALUES ($1, $6, $7)
-       ON CONFLICT (id) DO UPDATE SET last_message_at = now()
-       RETURNING id, title, created_at, last_message_at
-     ), stored AS (
-       INSERT INTO chat_messages (conversation_id, seq, role, content, recommendations, named_fragrances)
-       SELECT $1, base.n + v.n, v.role, v.content, v.recs, v.named
-         FROM (SELECT COALESCE(max(seq), 0) AS n FROM chat_messages WHERE conversation_id = $1) AS base,
-              (VALUES (1, 'user', $2, NULL::int[], $5::int[]), (2, 'assistant', $3, $4::int[], NULL::int[]))
-              AS v(n, role, content, recs, named)
-     )
-     SELECT * FROM conversation`,
-    [chat.id, user.message, reply, recs.map((r) => r.id), user.named, chat.subject, titleFrom(user.message)],
-  );
-  const row = rows[0];
-  return {
-    id: row.id,
-    title: row.title,
-    createdAt: new Date(row.created_at).toISOString(),
-    lastMessageAt: new Date(row.last_message_at).toISOString(),
-  };
-}
-
-async function ownedIds(db: Db, userId: number): Promise<number[]> {
-  const { rows } = await db.query("SELECT fragrance_id FROM collection WHERE user_id = $1 AND status = 'own'", [userId]);
-  return rows.map((r) => r.fragrance_id as number);
-}
-
 // One chat's messages for the page, with each reply's recommendation cards rebuilt from
 // the stored ids. `owned` is known for a user; a guest's page marks it from the browser.
 async function transcriptForPage(deps: ChatDeps, conversationId: string, userId: number | null) {
@@ -308,14 +248,4 @@ async function transcriptForPage(deps: ChatDeps, conversationId: string, userId:
     content: r.content as string,
     recommendations: cardsFor((r.recommendations as number[] | null) ?? [], snapshot, owned),
   }));
-}
-
-function cardsFor(ids: number[], snapshot: CatalogueSnapshot, owned: Set<number>): Omit<Recommendation, "match">[] {
-  const byId = new Map(snapshot.entries.map((entry) => [entry.id, entry]));
-  return ids.flatMap((id) => {
-    const entry = byId.get(id);
-    if (!entry) return [];
-    const { slug, name, brand, imageUrl, dominantFamily } = entry;
-    return [{ id, slug, name, brand, imageUrl, dominantFamily, owned: owned.has(id) }];
-  });
 }

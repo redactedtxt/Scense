@@ -39,19 +39,22 @@ export function adminRouter(db: Db, ai: AiSettings, now: () => number = Date.now
 }
 
 // `where` is one of the two fixed strings above, never request text.
-// Per day (DECISIONS B36): distinct visitors and distinct guests who used an AI feature
-// (the guest cap counts the second), chats started, messages, and tokens. Chats started
-// are counted from chat_conversations, so days older than CHAT_RETENTION_DAYS undercount
-// as their chats are deleted; the other columns come from llm_usage, which keeps no text
-// and is never purged.
+// Per day (DECISIONS B36, B37): distinct visitors and distinct guests who used an AI
+// feature (the guest cap counts the second), chats and concierge outings started,
+// messages per feature, and tokens. Chats and outings started are counted from
+// chat_conversations, so days older than CHAT_RETENTION_DAYS undercount as they are
+// deleted; the other columns come from llm_usage, which keeps no text and is never purged.
 async function usageByDay(db: Db, where: string, params: unknown[]) {
   const { rows } = await db.query(
     `SELECT u.day::text AS day,
             count(DISTINCT u.subject)::int AS visitors,
             count(DISTINCT u.subject) FILTER (WHERE u.subject LIKE 'guest:%')::int AS guests,
             (SELECT count(*) FROM chat_conversations c
-              WHERE (c.created_at AT TIME ZONE 'America/Toronto')::date = u.day)::int AS chats_started,
+              WHERE c.feature = 'chat' AND (c.created_at AT TIME ZONE 'America/Toronto')::date = u.day)::int AS chats_started,
+            (SELECT count(*) FROM chat_conversations c
+              WHERE c.feature = 'concierge' AND (c.created_at AT TIME ZONE 'America/Toronto')::date = u.day)::int AS outings_started,
             sum(u.user_messages)::int AS user_messages,
+            (sum(u.user_messages) FILTER (WHERE u.feature = 'concierge'))::int AS concierge_messages,
             sum(u.input_tokens)::bigint AS input_tokens,
             sum(u.output_tokens)::bigint AS output_tokens
        FROM llm_usage u
@@ -70,7 +73,9 @@ function withCost(r: Record<string, unknown>, ai: AiSettings) {
     visitors: r.visitors as number,
     guests: r.guests as number,
     chatsStarted: r.chats_started as number,
-    userMessages: r.user_messages as number,
+    outingsStarted: r.outings_started as number,
+    userMessages: r.user_messages as number, // both features
+    conciergeMessages: (r.concierge_messages as number | null) ?? 0,
     inputTokens,
     outputTokens,
     estimatedUsd: cost(inputTokens, outputTokens, ai),
@@ -84,7 +89,9 @@ function total(days: DayUsage[]) {
   return {
     // Visitors aren't summed: one person on three days is not three visitors.
     chatsStarted: sum((d) => d.chatsStarted),
+    outingsStarted: sum((d) => d.outingsStarted),
     userMessages: sum((d) => d.userMessages),
+    conciergeMessages: sum((d) => d.conciergeMessages),
     inputTokens: sum((d) => d.inputTokens),
     outputTokens: sum((d) => d.outputTokens),
     estimatedUsd: round(sum((d) => d.estimatedUsd)),

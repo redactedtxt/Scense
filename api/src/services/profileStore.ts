@@ -1,8 +1,9 @@
 import type { Db } from "../db.js";
 import { completeProfile, profileInput, type TasteProfile } from "./taste.js";
 
-// A signed-in user's taste profile in taste_profiles (SPEC section 5). Guests keep
-// theirs in the browser and send it with each chat message instead.
+// What the AI features read from a signed-in user's account: the taste profile in
+// taste_profiles (SPEC section 5) and the Own list. Guests keep both in the browser and
+// send them with each chat or concierge message instead.
 
 export async function loadProfile(db: Db, userId: number): Promise<TasteProfile | null> {
   const { rows } = await db.query("SELECT families, facets, summary FROM taste_profiles WHERE user_id = $1", [userId]);
@@ -32,4 +33,10 @@ export async function importProfile(db: Db, userId: number, profile: TasteProfil
     [userId, JSON.stringify(profile.families), JSON.stringify(profile.facets), profile.summary],
   );
   return rows.length > 0 ? "imported" : "kept";
+}
+
+// The Own list: the chat's owned picks and the concierge's candidates.
+export async function ownedIds(db: Db, userId: number): Promise<number[]> {
+  const { rows } = await db.query("SELECT fragrance_id FROM collection WHERE user_id = $1 AND status = 'own'", [userId]);
+  return rows.map((r) => r.fragrance_id as number);
 }

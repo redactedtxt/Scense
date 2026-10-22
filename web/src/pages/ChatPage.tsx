@@ -10,19 +10,12 @@ import { storeChatProfile } from "../lib/taste";
 import { ChatInput } from "./chat/ChatInput";
 import { ChatList } from "./chat/ChatList";
 import { MessageList } from "./chat/MessageList";
+import { GRID_HEIGHT, PANEL_HEIGHT, PanelBar } from "./chat/PanelBar";
 
 export const UNAVAILABLE_TEXT =
   "The assistant is unavailable right now. Everything else on Scense works as usual, so try the chat again later.";
 
 export const CHAT_GONE_TEXT = "That chat is gone. It may have been deleted, or it expired.";
-
-// The chat panel fills the screen under the header: 100dvh, so it shrinks with the
-// mobile browser's toolbars (and with the keyboard on Android, see index.html), minus
-// the header and this page's own vertical padding (12px a side on phones, 20px from
-// 641px). From 901px the grid row takes that height and the panel fills the row.
-const PANEL_HEIGHT =
-  "h-[calc(100dvh-var(--spacing-header-sm)-24px)] sm:h-[calc(100dvh-var(--spacing-header)-40px)] md:h-auto";
-const GRID_HEIGHT = "md:h-[calc(100dvh-var(--spacing-header))] md:grid-rows-[minmax(0,1fr)]";
 
 // /chat (SPEC sections 8 and 11): describe what you like, the AI turns it into a taste
 // profile, and the server recommends from the catalogue. A visitor keeps several chats
@@ -150,6 +143,8 @@ function Workspace({ userId }: { userId: number | null }) {
             onToggleList={() => setListOpen((open) => !open)}
             onNewChat={() => openChat(null)}
             newChatDisabled={activeId === null}
+            words={{ kicker: "Taste chat", list: "Chats", newOne: "New chat" }}
+            listId="chat-list"
           />
           {activeId === null ? (
             <MessageList
@@ -206,49 +201,6 @@ function OpenChat({ userId, id, pending, showHint }: { userId: number | null; id
   }
   return (
     <MessageList messages={chat.data.messages} pending={pending?.chatId === id ? pending.text : null} showHint={showHint} />
-  );
-}
-
-// The strip across the top of the panel: the open chat's title, "New chat", and below
-// 1280px the button that opens the chat list over the conversation.
-function PanelBar({
-  title,
-  chatCount,
-  listOpen,
-  onToggleList,
-  onNewChat,
-  newChatDisabled,
-}: {
-  title: string;
-  chatCount: number;
-  listOpen: boolean;
-  onToggleList: () => void;
-  onNewChat: () => void;
-  newChatDisabled: boolean;
-}) {
-  const buttonStyle =
-    "h-[34px] shrink-0 cursor-pointer border border-line-control px-3 text-[10px] font-semibold tracking-label text-muted uppercase transition-colors hover:border-gold-deep hover:text-text-bright disabled:cursor-default disabled:opacity-50";
-  return (
-    <div className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3 sm:px-6">
-      <button
-        type="button"
-        onClick={onToggleList}
-        aria-expanded={listOpen}
-        aria-controls="chat-list"
-        className={`${buttonStyle} xl:hidden`}
-      >
-        Chats{chatCount > 0 ? ` (${chatCount})` : ""}
-      </button>
-      <div className="min-w-0 flex-1">
-        <p className="kicker text-[9px]">Taste chat</p>
-        <h1 className="m-0 mt-1 truncate font-display text-[21px] leading-tight font-medium" title={title}>
-          {title}
-        </h1>
-      </div>
-      <button type="button" onClick={onNewChat} disabled={newChatDisabled} className={buttonStyle}>
-        New chat
-      </button>
-    </div>
   );
 }
 

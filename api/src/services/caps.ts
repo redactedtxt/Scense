@@ -89,14 +89,19 @@ export async function refundMessage(db: Db, key: { subject: string; feature: Fea
 }
 
 // Every call's tokens, valid answer or not: an invalid answer costs as much as a good one.
+// Usually the day's row exists (the message claimed it), but a free concierge chip that
+// completes an outing calls the model without claiming anything (DECISIONS B38), maybe
+// on a day with no row yet, so the row is created here with 0 messages if need be.
 export async function addTokens(
   db: Db,
   key: { subject: string; feature: Feature; day: string },
   tokens: { input: number; output: number },
 ): Promise<void> {
+  if (tokens.input === 0 && tokens.output === 0) return;
   await db.query(
-    `UPDATE llm_usage SET input_tokens = input_tokens + $4, output_tokens = output_tokens + $5
-      WHERE subject = $1 AND feature = $2 AND day = $3`,
+    `INSERT INTO llm_usage (subject, feature, day, input_tokens, output_tokens) VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (subject, feature, day) DO UPDATE
+        SET input_tokens = llm_usage.input_tokens + $4, output_tokens = llm_usage.output_tokens + $5`,
     [key.subject, key.feature, key.day, tokens.input, tokens.output],
   );
 }

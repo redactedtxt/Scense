@@ -1,3 +1,4 @@
+import type { z } from "zod";
 import { LlmUnavailableError, type Llm, type LlmMessage } from "./llm.js";
 import { modelOutput, OUTPUT_SCHEMA, type ModelOutput } from "./prompt.js";
 import { capWords, withoutRuleTalk, type ReplyGuard } from "./replyGuard.js";
@@ -18,34 +19,47 @@ import {
 
 export type Tokens = { input: number; output: number };
 
-export type ModelResult =
-  | { kind: "ok"; output: ModelOutput; tokens: Tokens }
+export type JsonResult<T> =
+  | { kind: "ok"; output: T; tokens: Tokens }
   | { kind: "invalid"; tokens: Tokens } // two answers in a row failed the schema
   | { kind: "unavailable"; tokens: Tokens }; // Anthropic could not answer at all
 
+export type ModelResult = JsonResult<ModelOutput>;
+
 const ATTEMPTS = 2; // the first try plus one retry
 
-export async function askModel(llm: Llm, system: string, messages: LlmMessage[]): Promise<ModelResult> {
+// Asks for JSON in `schema`'s shape and checks the answer with `shape` (Zod): one retry
+// on an invalid answer, then "invalid". Every attempt's tokens are counted. The chat and
+// the concierge (routes/concierge.ts) both use this.
+export async function askJson<T>(
+  llm: Llm,
+  request: { system: string; messages: LlmMessage[]; schema: Record<string, unknown> },
+  shape: z.ZodType<T>,
+): Promise<JsonResult<T>> {
   const tokens: Tokens = { input: 0, output: 0 };
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     let response;
     try {
-      response = await llm.complete({ system, messages, schema: OUTPUT_SCHEMA });
+      response = await llm.complete(request);
     } catch (err) {
       if (err instanceof LlmUnavailableError) return { kind: "unavailable", tokens };
       throw err;
     }
     tokens.input += response.inputTokens;
     tokens.output += response.outputTokens;
-    const output = parseOutput(response.text, response.stopReason);
-    if (output) return { kind: "ok", output, tokens };
+    const output = parseJson(response.text, response.stopReason, shape);
+    if (output !== null) return { kind: "ok", output, tokens };
   }
   return { kind: "invalid", tokens };
 }
 
+export function askModel(llm: Llm, system: string, messages: LlmMessage[]): Promise<ModelResult> {
+  return askJson(llm, { system, messages, schema: OUTPUT_SCHEMA }, modelOutput);
+}
+
 // A refusal or a reply cut off at max_tokens can't be trusted to be whole, even if it
 // happens to parse, so both count as invalid.
-export function parseOutput(text: string, stopReason: string | null): ModelOutput | null {
+export function parseJson<T>(text: string, stopReason: string | null, shape: z.ZodType<T>): T | null {
   if (stopReason === "refusal" || stopReason === "max_tokens") return null;
   let json: unknown;
   try {
@@ -53,7 +67,7 @@ export function parseOutput(text: string, stopReason: string | null): ModelOutpu
   } catch {
     return null;
   }
-  const result = modelOutput.safeParse(json);
+  const result = shape.safeParse(json);
   return result.success ? result.data : null;
 }
 

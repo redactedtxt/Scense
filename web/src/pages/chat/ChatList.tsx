@@ -1,9 +1,27 @@
 import { useEffect, useState } from "react";
 import type { ChatSummary } from "../../lib/api";
 
-// The visitor's chats, most recently used first (DECISIONS B36). From 1280px it is the
-// panel's left column; below that it opens over the conversation from the "Chats"
-// button. Titles are the visitor's own first messages, shown as text.
+// What the list calls its conversations. The concierge passes its own ("outings").
+export type ListWords = {
+  heading: string;
+  empty: string;
+  deleteLabel: string; // + ": <title>", for screen readers
+  confirm: string;
+  retention: string;
+};
+
+export const CHAT_WORDS: ListWords = {
+  heading: "Your chats",
+  empty: "No chats yet. Your chats appear here after your first message.",
+  deleteLabel: "Delete chat",
+  confirm: "Delete this chat?",
+  retention: "Chats are deleted 30 days after their last message.",
+};
+
+// The visitor's chats (or concierge outings), most recently used first (DECISIONS B36,
+// B37). From 1280px it is the panel's left column; below that it opens over the
+// conversation from the panel bar's button. Titles are the visitor's own first
+// messages, shown as text.
 export function ChatList({
   chats,
   activeId,
@@ -12,6 +30,8 @@ export function ChatList({
   onOpen,
   onClose,
   onDelete,
+  listId = "chat-list",
+  words = CHAT_WORDS,
 }: {
   chats: ChatSummary[];
   activeId: string | null;
@@ -20,6 +40,8 @@ export function ChatList({
   onOpen: (id: string | null) => void;
   onClose: () => void;
   onDelete: (id: string) => Promise<void>;
+  listId?: string;
+  words?: ListWords;
 }) {
   // Escape closes the list where it covers the conversation.
   useEffect(() => {
@@ -31,20 +53,18 @@ export function ChatList({
 
   return (
     <nav
-      id="chat-list"
-      aria-label="Your chats"
+      id={listId}
+      aria-label={words.heading}
       className={`${open ? "absolute inset-0 z-10 flex" : "hidden"} min-h-0 flex-col bg-panel xl:static xl:flex xl:border-r xl:border-line`}
     >
       <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3 xl:min-h-[66px]">
-        <p className="kicker">Your chats</p>
+        <p className="kicker">{words.heading}</p>
         <button type="button" onClick={onClose} className="cursor-pointer text-[11px] text-muted hover:text-text-bright xl:hidden">
           Close
         </button>
       </div>
       {chats.length === 0 ? (
-        <p className="m-0 px-4 py-4 text-[13px] leading-snug text-dim">
-          No chats yet. Your chats appear here after your first message.
-        </p>
+        <p className="m-0 px-4 py-4 text-[13px] leading-snug text-dim">{words.empty}</p>
       ) : (
         <ul className="m-0 min-h-0 flex-1 list-none overflow-y-auto p-0">
           {chats.map((chat) => (
@@ -55,12 +75,13 @@ export function ChatList({
               busy={chat.id === busyChatId}
               onOpen={() => onOpen(chat.id)}
               onDelete={() => onDelete(chat.id)}
+              words={words}
             />
           ))}
         </ul>
       )}
       <p className="m-0 shrink-0 border-t border-line px-4 py-3 text-[10px] leading-snug text-ghost">
-        Chats are deleted 30 days after their last message.
+        {words.retention}
       </p>
     </nav>
   );
@@ -72,12 +93,14 @@ function ChatRow({
   busy,
   onOpen,
   onDelete,
+  words,
 }: {
   chat: ChatSummary;
   active: boolean;
   busy: boolean;
   onOpen: () => void;
   onDelete: () => Promise<void>;
+  words: ListWords;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -113,7 +136,7 @@ function ChatRow({
             type="button"
             onClick={() => setConfirming(true)}
             disabled={busy}
-            aria-label={`Delete chat: ${chat.title}`}
+            aria-label={`${words.deleteLabel}: ${chat.title}`}
             className="h-6 w-6 shrink-0 cursor-pointer text-[16px] leading-none text-faint transition-colors hover:text-text-bright disabled:cursor-default disabled:opacity-40"
           >
             ×
@@ -122,7 +145,7 @@ function ChatRow({
       </div>
       {confirming && (
         <div className="flex flex-wrap items-center gap-3 px-3 pb-3 text-[11px]">
-          <span className="text-chip-on-text">{failed ? "That didn't delete. Try again?" : "Delete this chat?"}</span>
+          <span className="text-chip-on-text">{failed ? "That didn't delete. Try again?" : words.confirm}</span>
           <button
             type="button"
             onClick={() => void confirmDelete()}

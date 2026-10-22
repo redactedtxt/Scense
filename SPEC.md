@@ -54,7 +54,7 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 ├── .github/workflows/
 │   ├── ci.yml
 │   └── deploy.yml
-├── db/migrations/                # 001_init.sql, 002_search_aliases.sql, 003_accounts.sql, 004_reviews.sql, 005_chat.sql, 006_chat_named_bottles.sql, 007_multi_chat.sql
+├── db/migrations/                # 001_init.sql, 002_search_aliases.sql, 003_accounts.sql, 004_reviews.sql, 005_chat.sql, 006_chat_named_bottles.sql, 007_multi_chat.sql, 008_concierge.sql
 ├── pipeline/
 │   ├── raw/                      # Kaggle files, gitignored
 │   ├── config/
@@ -67,7 +67,7 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 │   │   ├── pinned_ids.csv        # id,slug of the fragrances guests may have saved; never changes (B28)
 │   │   ├── brand_aliases.csv     # search: abbreviation -> brand (YSL -> Yves Saint Laurent)
 │   │   ├── name_aliases.csv      # search: misspelling -> word in a fragrance name (myself -> MYSLF)
-│   │   └── occasions.yaml        # concierge occasion -> family preferences
+│   │   └── occasions.yaml        # concierge: occasion -> family weights, score weights, projection bands (read by the API)
 │   ├── src/
 │   │   ├── inspect_dataset.py
 │   │   ├── ingest.py
@@ -420,6 +420,18 @@ ALTER TABLE chat_messages ADD CONSTRAINT chat_messages_conversation_fk
 ALTER TABLE llm_usage ALTER COLUMN conversation_id DROP NOT NULL;  -- unused; dropped later (section 13, M11)
 ```
 
+Migration `008_concierge.sql` (M10; DECISIONS B37): an outing is a conversation, so the concierge reuses the chat tables. `feature` keeps the two apart; every query filters on it.
+
+```sql
+ALTER TABLE chat_conversations
+  ADD COLUMN feature TEXT NOT NULL DEFAULT 'chat' CHECK (feature IN ('chat', 'concierge'));
+ALTER TABLE chat_conversations ADD COLUMN slots JSONB;          -- the outing's validated slots; null for chats
+DROP INDEX chat_conversations_subject_idx;
+CREATE INDEX chat_conversations_subject_idx ON chat_conversations (subject, feature, last_message_at DESC);
+ALTER TABLE chat_messages ADD COLUMN options TEXT[];            -- concierge: the answer chips under a question
+ALTER TABLE chat_messages ADD COLUMN pick_reasons TEXT[];       -- concierge: one sentence per recommendation
+```
+
 ---
 
 ## 6. Guest mode
@@ -469,7 +481,10 @@ All responses JSON. Validate every body and query with Zod. Errors return `{ err
 | POST | `/api/chat` | See section 8. `{ message, conversationId? }`: no id starts a new chat, created only once its first message is answered; the response carries `conversation` |
 | DELETE | `/api/chat/:id` | Deletes the visitor's own chat and its messages; 204 either way. Gives no messages back (DECISIONS B36) |
 | GET | `/api/admin/usage?days=` | Section 10. Per day: distinct visitors, distinct guests, chats started, messages, tokens, estimated cost. `X-Admin-Token` header; 404 when `ADMIN_TOKEN` is blank |
-| POST | `/api/concierge` | See section 9 |
+| GET | `/api/concierge` | The visitor's outings, today's concierge `messagesUsed` and `messagesLimit` (its own budget), and `available` (M10; DECISIONS B37) |
+| GET | `/api/concierge/:id` | One outing: its slots as labels (`outing`), and its messages with answer chips (`options`) and pick cards with their sentences. 404 `no_outing` as for chats |
+| POST | `/api/concierge` | See section 9. `{ message, conversationId? }`, plus a guest's `owned` and `tasteProfile`; returns the reply, `options`, `picks`, `outing`, and the count |
+| DELETE | `/api/concierge/:id` | Deletes the visitor's own outing; 204 either way; no refund |
 | GET/POST/PUT/DELETE | `/api/fragrances/:id/reviews` | One review per user per fragrance: 1 to 5 stars, text up to 2,000 characters, plain text only. GET is public, 10 per page newest first, plus the viewer's own review as `mine`. PUT and DELETE act on the caller's own review. Writes are rate-limited per user (DECISIONS B33) |
 | GET | `/api/pair-ratings?baseId=&goal=` | The user's ratings for one result list, so cards show them on return (M8; DECISIONS B33) |
 | PUT | `/api/pair-ratings` | Store only. `{ baseId, partnerId, goal, stars }`; rating again replaces the rating. Rate-limited per user |
@@ -527,6 +542,18 @@ Slots: `occasion`, `time_of_day` (day or night), `season` (or weather), `setting
 
 Same cap and disclaimer pattern as the chatbot.
 
+As built (M10; DECISIONS B37):
+- **The model never names a fragrance.** It never sees one: the slot call gets the visitor's words and the slots so far; the sentence call gets each pick's facts (season share, day/night share, strength, its main families and facets, the occasion and setting) with no name, brand, or slug. The server shows the picks as cards.
+- **Evidence:** each slot the model fills comes with a quote from the visitor's messages, and the server keeps the value only if that quote is really there. A chip answer fills its slot with no model call.
+- **The server asks.** It computes what's missing and asks about the first missing slot (occasion, time of day, season, setting, projection), with fixed chips: Low/Medium/High, Day/Night, Indoor/Outdoor, the four seasons with the current Toronto season first, and the 8 occasions. The model may only suggest the question's wording, which passes the reply guard or is replaced.
+- **Each pick's sentence is checked** before it is shown: no fragrance, brand, or link; one sentence; and no number, family, facet, season, time, setting, occasion, note, or claim (hours, price, compliments) outside that pick's facts. A failing sentence is replaced by one the server writes from the facts.
+- **Candidates** are the Own list (the browser's for guests, `collection` for users); an empty list uses the whole catalogue, and the reply says so in one line. Fewer than 3 owned bottles give fewer picks.
+- **Scoring details (B38):** season and day/night shares are rescaled to 0..1 across the catalogue (min-max, per season and per day/night) before the weights apply. Outdoors moves the projection band up one step, capped at 4; indoor changes nothing.
+- **Every number** (score weights, share scaling, projection bands and the outdoor step, occasion family weights, fact thresholds, Toronto season months, the forced-result defaults) is in `occasions.yaml`; the API checks the file at startup.
+- **Caps:** 8 typed messages a day of its own (`CONCIERGE_MAX_USER_MESSAGES`), claimed atomically like the chat's. Chip answers are free and keep working after the 8. The guest cap counts distinct guests across both features.
+- **The day's last typed message forces a result (B38):** missing slots are assumed (the current Toronto season; night from 5 p.m. Toronto time, otherwise day; medium projection; indoor), and one line on the result lists them. A missing occasion is not assumed: occasion fit is left out of the score.
+- The disclaimer under the input: "Up to 8 typed messages a day, shared across all your outings; tapping an answer is free. Picks come from your Own list, or from our catalogue when it's empty."
+
 ---
 
 ## 10. AI caps and cost controls
@@ -548,7 +575,7 @@ Pages:
 | `/browse` | Catalogue grid with search, gender and family filters, and a sort control (Most popular, the default; Least popular; Highest rated). Search, filters, sort, and page live in the URL; the default sort stays out of it |
 | `/f/:slug` | Fragrance page: pyramid, accords as bars, family profile as a small wheel chart, strength, tags, rating, Want/Own buttons, reviews (pass 2), "Pair this" button |
 | `/chat` | Chatbot: a chat panel, a chat list, and the taste profile card (layout below). The open chat is in the URL (`?c=<id>`); no id is a new chat |
-| `/concierge` | Concierge chat with question chips |
+| `/concierge` | Concierge: the chat's panel layout (fixed height, own scroll, pinned input, an outings list with "New outing"), answer chips under the latest question, pick cards with one sentence each, and an outing card with the five slots beside the panel. The open outing is in the URL (`?o=<id>`) |
 | `/me` | Collection tabs (Own, Want) and the editable taste profile card |
 | `/about` | How the scoring works: the wheel, ring distance, Enhance vs Soften, with a diagram. Recruiters read this page |
 | `/login`, `/signup` | Pass 2 |

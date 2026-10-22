@@ -1,0 +1,161 @@
+# The concierge's numbers (SPEC section 9; DECISIONS B37, B38). Read by the API only: an
+# edit needs an API restart, no pipeline run. Tejas reviewed the occasion weights on
+# 2026-10-22.
+
+# score = Σ weight × term. The five weights must sum to 1 (the API checks).
+score_weights:
+  season: 0.30       # the bottle's share of season votes for the outing's season, rescaled
+  daynight: 0.20     # its share of day/night votes for the outing's time of day, rescaled
+  projection: 0.20   # projection fit, below
+  occasion: 0.20     # cosine of its family profile with the occasion's weights below
+  taste: 0.10        # cosine with the visitor's taste profile (0 when there is none)
+
+# The strengths (1 to 4) each projection wants. A bottle inside its band scores
+# `inside`; one strength step outside scores `one_step`; further out scores `beyond`.
+projection_bands:
+  low: [1, 2]
+  medium: [2, 3]
+  high: [3, 4]
+projection_fit:
+  inside: 1.0
+  one_step: 0.5
+  beyond: 0.0
+
+# How the season and day/night shares are put on one scale before scoring (B38).
+# One season's share only runs from about 0.06 to 0.43 across the catalogue, so as raw
+# numbers season would pull less than its 0.30 weight says. `min_max` maps each season's
+# share, and each of day and night, to 0..1 across the whole catalogue: the bottle with
+# the lowest autumn share scores 0 for autumn, the highest scores 1. `none` uses the raw
+# vote shares.
+share_scaling: min_max
+
+# Outdoors, a scent carries less, so an outdoor outing moves the projection band up this
+# many strength steps (capped at 4): outdoor medium wants 3-4, outdoor high wants 4.
+# Indoor changes nothing.
+outdoor_projection_steps: 1
+
+# The day's last typed message always gets a result (B38). Slots still missing are
+# assumed: the current Toronto season (season_months below), night from this hour on in
+# Toronto (day before it), and this projection and setting. A missing occasion is not
+# assumed; occasion fit is then left out of the score.
+defaults:
+  night_from_hour: 17
+  projection: medium
+  setting: indoor
+
+# What the server tells the model about each pick, for its one-sentence explanation:
+# the families with at least this share (largest first, at most max_families), and the
+# facets at least this strong. The model may mention only these (DECISIONS B37).
+facts:
+  min_family_share: 0.10
+  max_families: 3
+  min_facet: 0.20
+
+# Which months count as which season in Toronto, for the season chip offered first.
+# Meteorological seasons: whole months, so the chip never flips mid-week.
+season_months:
+  winter: [12, 1, 2]
+  spring: [3, 4, 5]
+  summer: [6, 7, 8]
+  autumn: [9, 10, 11]
+
+# The 8 occasions (SPEC section 9). `label` is the chip text and how the server names
+# the occasion in its own sentences. `families` are weights from 0 to 1 on the 14
+# wheel families; a family left out is 0. Only the shape of the vector matters (it is
+# compared by cosine), so 0.8 vs 0.4 means "twice as fitting", not an absolute level.
+occasions:
+  office:
+    label: Office
+    # Clean and close: nothing that fills a shared room.
+    families:
+      Soft Floral: 0.8
+      Citrus: 0.7
+      Aromatic Fougère: 0.6
+      Woods: 0.6
+      Water: 0.5
+      Green: 0.5
+      Floral: 0.3
+      Mossy Woods: 0.3
+
+  date_night:
+    label: Date night
+    # Warm, close, and a little sweet.
+    families:
+      Floral Amber: 0.9
+      Amber: 0.8
+      Soft Amber: 0.8
+      Woody Amber: 0.7
+      Woods: 0.5
+      Floral: 0.4
+      Fruity: 0.3
+
+  wedding:
+    label: Wedding
+    # Soft, clean flowers on polished woods; nothing that competes with the couple.
+    families:
+      Soft Floral: 0.8
+      Floral: 0.6
+      Woods: 0.6
+      Citrus: 0.5
+      Aromatic Fougère: 0.4
+      Floral Amber: 0.4
+      Soft Amber: 0.4
+
+  casual_day:
+    label: Casual day
+    # Easy, bright, and fresh.
+    families:
+      Citrus: 0.8
+      Fruity: 0.7
+      Green: 0.6
+      Water: 0.6
+      Aromatic Fougère: 0.5
+      Floral: 0.5
+      Woods: 0.4
+
+  gym_outdoors:
+    label: Gym or outdoors
+    # Fresh and airy; heat and effort make heavy families cloying.
+    families:
+      Water: 0.9
+      Citrus: 0.9
+      Green: 0.7
+      Aromatic Fougère: 0.6
+      Fruity: 0.3
+
+  night_out:
+    label: Night out
+    # Loud, warm, sweet-spiced crowd-pleasers, including the fruity-woody club scents.
+    families:
+      Woody Amber: 0.9
+      Amber: 0.7
+      Floral Amber: 0.6
+      Fruity: 0.5
+      Dry Woods: 0.5
+      Soft Amber: 0.6
+      Aromatic Fougère: 0.4
+
+  formal_event:
+    label: Formal event
+    # Polished woods and a touch of classic chypre, with some warmth.
+    families:
+      Woods: 0.8
+      Mossy Woods: 0.5
+      Soft Amber: 0.6
+      Floral Amber: 0.6
+      Dry Woods: 0.5
+      Soft Floral: 0.5
+      Amber: 0.5
+      Floral: 0.4
+
+  interview:
+    label: Interview
+    # Like the office, but even safer: clean, quiet, nothing divisive.
+    families:
+      Soft Floral: 0.8
+      Woods: 0.7
+      Citrus: 0.6
+      Aromatic Fougère: 0.6
+      Mossy Woods: 0.4
+      Water: 0.3
+      Green: 0.3
