@@ -8,6 +8,7 @@ import { FACET_NAMES, FAMILY_NAMES } from "./taste.js";
 //  1. No fragrance name or brand from the catalogue, and no brand alias (YSL, TF...).
 //  2. No links.
 //  3. On topic: the text must mention a family, facet, note, or a scent word.
+//  4. No talk about its own rules ("I won't name fragrances", "my instructions").
 //
 // Text that fails any check is replaced with a reply the server writes itself from the
 // numbers (chat.ts), so the worst a hostile message can do is skew its own profile.
@@ -34,7 +35,29 @@ const SCENT_WORDS = ["scent", "scents", "smell", "smells", "fragrance", "fragran
 
 const LINK = /\bhttps?:\/\/|\bwww\.|\b[a-z0-9-]+\.(com|net|org|io|co|shop|store)\b/i;
 
-export type GuardResult = "ok" | "names_product" | "link" | "off_topic";
+// The reply talking about its own rules or limits (DECISIONS B35): "I won't name
+// fragrances", "I can't recommend specific bottles", "my instructions", "the site picks
+// the bottles". A visitor should only ever hear about scent.
+const RULE_TALK = [
+  /\b(?:i|we)(?:\s+am|\s+are|['’]m|['’]re)?\s+(?:can(?:not|['’]t)|won['’]?t|will not|not (?:able|allowed|permitted)|do(?:n['’]t| not)|must not|never|unable)\s+(?:to\s+)?(?:\w+\s+){0,2}(?:name|recommend|suggest|mention|share|reveal|list|give)\b/i,
+  /\b(?:not|never) (?:allowed|permitted) to\b/i,
+  /\b(?:my|these|those|the) (?:rules|instructions|guidelines|system prompt)\b/i,
+  /\bas an ai\b/i,
+  /\b(?:the )?(?:website|site|server|catalogue|catalog) (?:will )?(?:picks?|chooses?|selects?|handles?) (?:the )?(?:fragrances|bottles|perfumes|recommendations|picks)\b/i,
+];
+
+export function mentionsRules(text: string): boolean {
+  return RULE_TALK.some((pattern) => pattern.test(text));
+}
+
+// The text without its rule-talk sentences, so one stray "I won't name brands" doesn't
+// cost the visitor a good reply. Empty if nothing else was said.
+export function withoutRuleTalk(text: string): string {
+  const sentences = text.match(/[^.!?]+[.!?]*\s*/g) ?? [];
+  return sentences.filter((sentence) => !mentionsRules(sentence)).join("").trim();
+}
+
+export type GuardResult = "ok" | "names_product" | "link" | "mentions_rules" | "off_topic";
 
 export type ReplyGuard = { check(text: string): GuardResult };
 
@@ -56,6 +79,7 @@ export function createReplyGuard(snapshot: CatalogueSnapshot): ReplyGuard {
   return {
     check(text) {
       if (LINK.test(text)) return "link";
+      if (mentionsRules(text)) return "mentions_rules";
       const padded = ` ${normalize(text)} `;
       for (const phrase of blockedSet) if (padded.includes(` ${phrase} `)) return "names_product";
       for (const word of topicWords) if (padded.includes(` ${word} `)) return "ok";

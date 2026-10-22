@@ -59,7 +59,10 @@ export function createApp(
   app.use("/api", pairRatingsRouter(db, auth, now));
   app.use("/api", profileRouter(db, auth));
   const catalogue = createCatalogueCache(db, now);
-  app.use("/api", chatRouter({ db, auth, ai: ai.settings, llm: ai.llm, catalogue, now }));
+  app.use(
+    "/api",
+    chatRouter({ db, auth, ai: ai.settings, llm: ai.llm, catalogue, fuzzyMinSimilarity: settings.fuzzyMinSimilarity, now }),
+  );
   app.use("/api", adminRouter(db, ai.settings, now));
   app.use("/api", notFoundHandler);
   app.use(errorHandler);

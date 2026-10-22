@@ -1,7 +1,7 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { signSession } from "../services/auth.js";
-import { CONFUSED_REPLY } from "../services/chat.js";
+import { CONFUSED_REPLY, PICKS_LEAD_IN } from "../services/chat.js";
 import { LlmUnavailableError } from "../services/llm.js";
 import { aiWith, appWith, auth, fakeLlm, modelJson, profileAt } from "./helpers.js";
 
@@ -12,20 +12,32 @@ import { aiWith, appWith, auth, fakeLlm, modelJson, profileAt } from "./helpers.
 const GUEST = "0b6f2c1e-4d2a-4c7e-9a51-2f1d3c4b5a69";
 const CONVERSATION = "7d0b4a8e-1c2f-4e3a-8b9c-0a1b2c3d4e5f";
 
-// A three-bottle catalogue: what the server may recommend and the names the reply
-// guard must keep out of replies.
+// A four-bottle catalogue: what the server may recommend, the names the reply guard
+// must keep out of replies, and a bottle a visitor can name (Myrrh & Tonka).
 const FRAGRANCES = [
   { id: 1, slug: "creed-aventus-2010", name: "Aventus", brand: "Creed", family: "Fruity", profile: profileAt(10) },
   { id: 2, slug: "dior-sauvage-2015", name: "Sauvage", brand: "Dior", family: "Citrus", profile: profileAt(7) },
   { id: 3, slug: "ysl-black-opium-2014", name: "Black Opium", brand: "Yves Saint Laurent", family: "Woody Amber", profile: profileAt(2) },
-].map((f) => ({ ...f, image_url: null, facets: { spicy: f.id === 3 ? 0.4 : 0 } }));
+  { id: 4, slug: "jo-malone-london-myrrh-tonka-2013", name: "Myrrh & Tonka", brand: "Jo Malone London", family: "Amber", profile: profileAt(1) },
+].map((f) => ({ ...f, image_url: null, facets: { spicy: f.id === 3 ? 0.4 : 0, sweet: f.id === 4 ? 0.9 : 0 } }));
 
 type Reserve = { conversation_id: string; user_messages: number; created: boolean } | null;
 
 // The SQL the chat route sends, answered from `state`. `reserve` is what the cap
 // statement returns: a row (slot claimed) or nothing (refused).
-function chatRoutes(state: { reserve: Reserve; usageRow?: boolean; history?: unknown[]; profileRow?: unknown }) {
+function chatRoutes(state: {
+  reserve: Reserve;
+  usageRow?: boolean;
+  history?: unknown[];
+  profileRow?: unknown;
+  namedEarlier?: number[];
+}) {
   return [
+    // The catalogue search for named bottles: only "Myrrh & Tonka" is found (the
+    // connector-free retry), and the typo search finds nothing.
+    [/search_vector @@/, (params: unknown[]) => (params[0] === "Myrrh:* & Tonka:*" ? [{ id: 4 }] : [])],
+    [/WITH scored AS/, []],
+    [/unnest\(named_fragrances\)/, () => (state.namedEarlier ?? []).map((id) => ({ id }))],
     [/INSERT INTO llm_usage/, () => (state.reserve ? [state.reserve] : [])],
     [/SELECT conversation_id, user_messages FROM llm_usage/, () =>
       state.usageRow ? [{ conversation_id: CONVERSATION, user_messages: 8 }] : []],
@@ -41,7 +53,7 @@ function chatRoutes(state: { reserve: Reserve; usageRow?: boolean; history?: unk
     [/FROM taste_profiles/, () => (state.profileRow ? [state.profileRow] : [])],
     [/INSERT INTO taste_profiles/, []],
     [/FROM collection/, []],
-  ] as [RegExp, unknown[] | (() => unknown[])][];
+  ] as [RegExp, unknown[] | ((params: unknown[]) => unknown[])][];
 }
 
 const firstSlot: Reserve = { conversation_id: CONVERSATION, user_messages: 1, created: true };
@@ -151,9 +163,7 @@ describe("POST /api/chat: a prompt-injection message", () => {
       const { llm } = fakeLlm([modelJson({ reply, profile_update: { families: {}, facets: {} } })]);
       const { app } = appWith(chatRoutes({ reserve: firstSlot }), undefined, aiWith(llm));
       const res = await send(app, { message: ATTACK });
-      expect(res.body.reply).toBe(
-        "I can only help describe the scents you like and dislike. What smells do you enjoy, or can't stand?",
-      );
+      expect(res.body.reply).toBe("Let's stay with scent: what smells do you enjoy, and which can't you stand?");
     }
   });
 
@@ -274,7 +284,9 @@ describe("POST /api/chat: history and recommendations", () => {
 
   it("recommends on the last message even if the model isn't ready, owned bottles first", async () => {
     const { llm } = fakeLlm([modelJson({ profile_update: { families: { Fruity: 1, Citrus: 0.5 }, facets: {} } })]);
-    const { app } = appWith(chatRoutes({ reserve: { ...firstSlot, user_messages: 8 } }), undefined, aiWith(llm));
+    // Owned Sauvage matches this profile at 45%; lower the owned bar so it qualifies.
+    const ai = aiWith(llm, { ownedMinMatch: 0.4 });
+    const { app } = appWith(chatRoutes({ reserve: { ...firstSlot, user_messages: 8 } }), undefined, ai);
     const res = await send(app, { message: "last one", owned: [2] });
     // Owned Sauvage (Citrus) first, then Aventus (Fruity), which scores higher than it.
     expect(res.body.recommendations.map((r: { id: number; owned: boolean }) => [r.id, r.owned])).toEqual([
@@ -301,5 +313,81 @@ describe("GET /api/chat", () => {
     const { app } = appWith(chatRoutes({ reserve: null }), undefined, aiWith(null));
     const res = await request(app).get("/api/chat").set("X-Guest-Id", GUEST);
     expect(res.body).toMatchObject({ available: false, messagesUsed: 0, messages: [] });
+  });
+});
+
+describe("POST /api/chat: fixes from the first real test (DECISIONS B35)", () => {
+  const ready = (reply: string, families: Record<string, number> = { Fruity: 1 }) =>
+    modelJson({ reply, profile_update: { families, facets: {} }, ready_to_recommend: true });
+
+  it("introduces the picks instead of offering them", async () => {
+    const { llm } = fakeLlm([ready("Juicy Fruity notes suit you. Would you like recommendations now?")]);
+    const { app } = appWith(chatRoutes({ reserve: firstSlot }), undefined, aiWith(llm));
+    const res = await send(app, { message: "I love juicy fruit" });
+    expect(res.body.recommendations.length).toBeGreaterThan(0);
+    expect(res.body.reply).toBe(`Juicy Fruity notes suit you. ${PICKS_LEAD_IN}`);
+  });
+
+  it("looks up bottles the visitor names, blends the found ones in, and never picks them", async () => {
+    const message = "my favourites are Myrrh and Tonka, SWY Intensely, Hawas Fire";
+    const { llm, requests } = fakeLlm([
+      modelJson({
+        reply: "Those point to warm, sweet Amber. Do you like them in winter?",
+        profile_update: { families: {}, facets: {} },
+        mentioned_fragrances: [
+          { name: "Myrrh and Tonka", liked: true },
+          { name: "SWY Intensely", liked: true },
+          { name: "Hawas Fire", liked: true },
+        ],
+        ready_to_recommend: true,
+      }),
+    ]);
+    const { app, calls } = appWith(chatRoutes({ reserve: firstSlot }), undefined, aiWith(llm));
+    const res = await send(app, { message });
+
+    expect(res.body.reply.startsWith(
+      "I found 1 of the bottles you named in our catalogue and added its character to your profile; the others aren't in the catalogue yet.",
+    )).toBe(true);
+    expect(res.body.reply).not.toMatch(/myrrh|tonka|swy|hawas/i);
+    // Myrrh & Tonka (Amber, sweet 0.9) as a strong update: 0.4 × 1 and 0.4 × 0.9.
+    expect(res.body.profile.families.Amber).toBe(0.4);
+    expect(res.body.profile.facets.sweet).toBe(0.36);
+    // Found, so never picked; the stored user row remembers it for later turns.
+    expect(res.body.recommendations.map((r: { id: number }) => r.id)).not.toContain(4);
+    const stored = calls.find((c) => /INSERT INTO chat_messages/.test(c.sql))!;
+    expect(stored.params[4]).toEqual([4]);
+    // The model's prompt never contained the catalogue; the names only came from the visitor.
+    expect(requests[0]!.system).not.toContain("Myrrh");
+  });
+
+  it("keeps bottles named earlier in the conversation out of the picks", async () => {
+    const { llm } = fakeLlm([ready("Juicy Fruity notes suit you.", { Fruity: 1, Citrus: 0.6 })]);
+    const { app } = appWith(chatRoutes({ reserve: firstSlot, namedEarlier: [1] }), undefined, aiWith(llm));
+    const res = await send(app, { message: "fruit and citrus" });
+    const ids = res.body.recommendations.map((r: { id: number }) => r.id);
+    expect(ids).toContain(2);
+    expect(ids).not.toContain(1);
+  });
+
+  it("doesn't put a weak owned match first (config CHAT_OWNED_MIN_MATCH, 0.6)", async () => {
+    // Woody Amber with a little Citrus: owned Sauvage (Citrus) matches only about 29%,
+    // under the 60% bar, so the picks are the best bottles the visitor doesn't own.
+    const { llm } = fakeLlm([ready("Spicy Woody Amber with an edge.", { "Woody Amber": 1, Citrus: 0.3 })]);
+    const { app } = appWith(chatRoutes({ reserve: firstSlot }), undefined, aiWith(llm));
+    const res = await send(app, { message: "spicy with an edge", owned: [2] });
+    expect(res.body.recommendations.map((r: { id: number; owned: boolean }) => [r.id, r.owned])).toEqual([[3, false]]);
+  });
+
+  it("never shows the model talking about its own rules", async () => {
+    const { llm } = fakeLlm([
+      modelJson({
+        reply: "Warm Woody Amber fits that. I won't name fragrances, but the site will pick some. Do you like spice?",
+        summary: "You like Woody Amber; I can't recommend specific bottles.",
+      }),
+    ]);
+    const { app } = appWith(chatRoutes({ reserve: firstSlot }), undefined, aiWith(llm));
+    const res = await send(app, { message: "warm woods" });
+    expect(res.body.reply).toBe("Warm Woody Amber fits that. Do you like spice?");
+    expect(res.body.profile.summary).toBe("You lean toward Woody Amber and spicy scents.");
   });
 });
