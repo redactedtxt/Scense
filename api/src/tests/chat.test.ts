@@ -379,7 +379,8 @@ describe("several chats (DECISIONS B36)", () => {
     const res = await request(app).delete(`/api/chat/${CONVERSATION}`).set("X-Guest-Id", GUEST);
     expect(res.status).toBe(204);
     const deleted = calls.find((c) => /DELETE FROM chat_conversations WHERE id/.test(c.sql))!;
-    expect(deleted.params).toEqual([CONVERSATION, `guest:${GUEST}`]);
+    // Only a chat: an outing id with the same owner is not touched (DECISIONS B37).
+    expect(deleted.params).toEqual([CONVERSATION, `guest:${GUEST}`, "chat"]);
     expect(calls.some((c) => /llm_usage/.test(c.sql))).toBe(false);
   });
 

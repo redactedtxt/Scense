@@ -4,20 +4,25 @@ import { useId, useState, type FormEvent, type KeyboardEvent } from "react";
 const MAX_CHARS = 500;
 
 // The message box, the Send button, the day's count, and the disclaimer SPEC section 8
-// asks for. It sits pinned at the bottom of the chat panel. `closedText` replaces the box
-// when no chat can take another message. The count is the day's, shared by every chat.
+// asks for (the concierge passes its own). It sits pinned at the bottom of the panel.
+// `closedText` replaces the box when no conversation can take another message. The count
+// is the day's, shared by every chat (or every outing).
 export function ChatInput({
   onSend,
   busy,
   closedText,
   used,
   limit,
+  disclaimer = `Up to ${limit} messages a day, shared across all your chats. Recommendations come from our catalogue only.`,
+  placeholder = "I like…",
 }: {
   onSend: (message: string) => Promise<boolean>;
   busy: boolean;
   closedText: string | null;
   used: number;
   limit: number;
+  disclaimer?: string;
+  placeholder?: string;
 }) {
   const [draft, setDraft] = useState("");
   const id = useId();
@@ -61,7 +66,7 @@ export function ChatInput({
             onKeyDown={onKeyDown}
             maxLength={MAX_CHARS}
             rows={2}
-            placeholder="I like…"
+            placeholder={placeholder}
             className="mt-2 w-full resize-none border border-line-input bg-transparent p-3 font-display text-lg text-text-input outline-0 transition-colors placeholder:text-faint focus:border-gold"
           />
           <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
@@ -80,9 +85,7 @@ export function ChatInput({
           </div>
         </form>
       )}
-      <p className="m-0 mt-3 text-[11px] leading-snug text-dim">
-        Up to {limit} messages a day, shared across all your chats. Recommendations come from our catalogue only.
-      </p>
+      <p className="m-0 mt-3 text-[11px] leading-snug text-dim">{disclaimer}</p>
     </div>
   );
 }

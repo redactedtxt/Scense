@@ -2,8 +2,9 @@ import type { Db } from "../db.js";
 import { dominantFamilyId } from "./sql.js";
 import { FACET_NAMES } from "./taste.js";
 
-// The parts of the catalogue the chat needs on every message: each fragrance's
-// 20-value vector (recommend.ts) and every name, brand, and note (replyGuard.ts).
+// The parts of the catalogue the chat and the concierge need on every message: each
+// fragrance's 20-value vector and vote shares (recommend.ts) and every name, brand, and
+// note (replyGuard.ts).
 // The catalogue only changes when the pipeline reseeds it, so one copy in memory,
 // refreshed hourly, beats reading 1,000 rows per chat message.
 
@@ -15,6 +16,10 @@ export type CatalogueEntry = {
   imageUrl: string | null;
   dominantFamily: string;
   vector: number[]; // 14 family shares in ring order, then the 6 facets
+  // The concierge's facts (SPEC section 9): vote shares from 0 to 1, and strength 1-4.
+  seasons: Record<string, number>; // winter, spring, summer, autumn; they sum to 1
+  daynight: Record<string, number>; // day, night; they sum to 1
+  strength: number;
 };
 
 export type CatalogueSnapshot = {
@@ -48,7 +53,8 @@ export type CatalogueCache = ReturnType<typeof createCatalogueCache>;
 
 async function load(db: Db): Promise<CatalogueSnapshot> {
   const fragrances = await db.query(
-    `SELECT f.id, f.slug, f.name, f.brand, f.image_url, f.profile, f.facets, fam.name AS family
+    `SELECT f.id, f.slug, f.name, f.brand, f.image_url, f.profile, f.facets, f.seasons, f.daynight, f.strength,
+            fam.name AS family
        FROM fragrances f
        JOIN families fam ON fam.id = ${dominantFamilyId("f.profile")}
       ORDER BY f.id`,
@@ -72,5 +78,8 @@ function entryOf(r: Record<string, unknown>): CatalogueEntry {
     imageUrl: (r.image_url as string | null) ?? null,
     dominantFamily: r.family as string,
     vector: [...(r.profile as number[]), ...FACET_NAMES.map((name) => facets[name] ?? 0)],
+    seasons: r.seasons as Record<string, number>,
+    daynight: r.daynight as Record<string, number>,
+    strength: r.strength as number,
   };
 }

@@ -13,6 +13,10 @@ export const ACCOUNT_TASTE_KEY = ["account-taste-profile"] as const;
 export const chatKey = (userId: number | null) => ["chat", userId ?? "guest"] as const;
 export const chatConversationKey = (userId: number | null, id: string) =>
   ["chat", userId ?? "guest", "conversation", id] as const;
+// The same for the concierge's outings (DECISIONS B37), under ["concierge"].
+export const conciergeKey = (userId: number | null) => ["concierge", userId ?? "guest"] as const;
+export const conciergeOutingKey = (userId: number | null, id: string) =>
+  ["concierge", userId ?? "guest", "outing", id] as const;
 
 // Any failure counts as signed out: a 401 is the normal answer for a guest, and if the
 // API is down the site should still work in guest mode rather than show an error.
@@ -44,6 +48,7 @@ export function useSignOut() {
     client.removeQueries({ queryKey: ACCOUNT_COLLECTION_KEY });
     client.removeQueries({ queryKey: ACCOUNT_TASTE_KEY });
     client.removeQueries({ queryKey: ["chat"] });
+    client.removeQueries({ queryKey: ["concierge"] });
   };
 }
 

@@ -4,11 +4,12 @@ import { useStorageBlocked } from "../lib/collection";
 import { loginHref, useSession, useSignOut } from "../lib/session";
 import { Logo } from "./Logo";
 
-// Only pages that exist get a link. Concierge joins this list when it lands (M10).
+// Only pages that exist get a link.
 const NAV_ITEMS = [
   { to: "/", label: "Pair" },
   { to: "/browse", label: "Browse" },
   { to: "/chat", label: "Chat" },
+  { to: "/concierge", label: "Concierge" },
   { to: "/me", label: "Collection" },
   { to: "/about", label: "About" },
 ];

@@ -27,3 +27,21 @@ export function StarIcon({ className = "" }: { className?: string }) {
     </svg>
   );
 }
+
+// Three lines: opens a list (the chat and concierge panels' list button on phones).
+export function ListIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={`w-[17px] fill-none stroke-current stroke-[1.4] ${className}`}>
+      <path d="M5 7h14M5 12h14M5 17h14" />
+    </svg>
+  );
+}
+
+// A plus: starts something new (the panels' "New chat" / "New outing" on phones).
+export function PlusIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" className={`w-[17px] fill-none stroke-current stroke-[1.4] ${className}`}>
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}

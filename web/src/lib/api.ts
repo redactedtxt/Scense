@@ -152,6 +152,41 @@ export type ChatReply = {
   messagesLimit: number;
 };
 
+// --- the concierge (M10; DECISIONS B37) ---
+
+export type OutingSlotName = "occasion" | "time_of_day" | "season" | "setting" | "projection";
+
+// One of the outing's five slots as the server describes it: its label ("Date night",
+// "Fall"), or null while it's still missing.
+export type OutingSlot = { slot: OutingSlotName; value: string | null };
+
+// A bottle the concierge picked, with the one sentence on why it fits. The first pick of
+// a reply is the top pick; the others are alternatives.
+export type ConciergePick = Omit<ChatRecommendation, "match"> & { reason: string };
+
+export type ConciergeMessage = {
+  role: "user" | "assistant";
+  content: string;
+  options: string[]; // the answer chips under a question; [] otherwise
+  picks: ConciergePick[];
+};
+
+// The concierge's own budget (separate from the chat's) and the visitor's outings.
+export type ConciergeState = ChatState;
+
+export type ConciergeOuting = { conversation: ChatSummary; outing: OutingSlot[]; messages: ConciergeMessage[] };
+
+export type ConciergeReply = {
+  conversation: ChatSummary; // the outing the message went to; new on a first message
+  reply: string;
+  options: string[];
+  picks: ConciergePick[];
+  outing: OutingSlot[];
+  degraded: boolean;
+  messagesUsed: number;
+  messagesLimit: number;
+};
+
 // Carries the API's error code so pages can tell "not found" from "server down".
 export class ApiError extends Error {
   constructor(
@@ -286,6 +321,22 @@ export const api = {
 
   // Gives no messages back: today's count stays as it is.
   deleteChat: (id: string) => request<void>(`/chat/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // --- the concierge (pass 2, M10) ---
+  concierge: () => request<ConciergeState>("/concierge"),
+
+  conciergeOuting: (id: string) => request<ConciergeOuting>(`/concierge/${encodeURIComponent(id)}`),
+
+  // Like sendChat: no conversationId starts a new outing, and a guest sends their Own list
+  // (the candidates) and taste profile; a signed-in user's come from the account.
+  sendConcierge: (body: {
+    message: string;
+    conversationId?: string;
+    tasteProfile?: TasteProfile | null;
+    owned?: number[];
+  }) => request<ConciergeReply>("/concierge", { method: "POST", body: JSON.stringify(body) }),
+
+  deleteOuting: (id: string) => request<void>(`/concierge/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   tasteProfile: () => request<{ profile: TasteProfile | null }>("/profile/taste"),
 

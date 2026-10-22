@@ -8,6 +8,7 @@ import { errorHandler, notFoundHandler } from "./middleware/errors.js";
 import { adminRouter } from "./routes/admin.js";
 import { authRouter } from "./routes/auth.js";
 import { chatRouter } from "./routes/chat.js";
+import { conciergeRouter } from "./routes/concierge.js";
 import { collectionRouter } from "./routes/collection.js";
 import { familiesRouter } from "./routes/families.js";
 import { fragrancesRouter } from "./routes/fragrances.js";
@@ -20,11 +21,14 @@ import { reviewsRouter } from "./routes/reviews.js";
 import type { CatalogueSettings } from "./services/catalogue.js";
 import { createCatalogueCache } from "./services/catalogueCache.js";
 import type { Llm } from "./services/llm.js";
+import type { ConciergeSettings } from "./services/occasions.js";
 import type { Matrices } from "./services/scoring.js";
 
-// The AI side of the app: its settings, and the model client, or null when no API key
-// is configured (the chat then says the assistant is unavailable).
-export type AiDeps = { settings: AiSettings; llm: Llm | null };
+// The AI side of the app: its settings, the model client, or null when no API key is
+// configured (the chat and the concierge then say the assistant is unavailable), and the
+// concierge's occasions.yaml. Without that file's settings the concierge isn't mounted;
+// only tests that never touch it leave them out.
+export type AiDeps = { settings: AiSettings; llm: Llm | null; concierge?: ConciergeSettings };
 
 // Built from its dependencies (not module globals) so tests can pass a fake db, a
 // short bcrypt cost, a clock they control, and a fake model.
@@ -63,6 +67,9 @@ export function createApp(
     "/api",
     chatRouter({ db, auth, ai: ai.settings, llm: ai.llm, catalogue, fuzzyMinSimilarity: settings.fuzzyMinSimilarity, now }),
   );
+  if (ai.concierge) {
+    app.use("/api", conciergeRouter({ db, auth, ai: ai.settings, llm: ai.llm, catalogue, concierge: ai.concierge, now }));
+  }
   app.use("/api", adminRouter(db, ai.settings, now));
   app.use("/api", notFoundHandler);
   app.use(errorHandler);

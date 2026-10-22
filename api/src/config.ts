@@ -39,6 +39,12 @@ const aiSchema = z.object({
   CHAT_NAMED_BOTTLE_WEIGHT: fraction(1),
   CHAT_NAMED_MIN_WEIGHT: fraction(0.25),
   CHAT_NAMED_MAX: count(5),
+  // The concierge (M10; DECISIONS B37) has its own daily budget, separate from the chat's
+  // and claimed the same atomic way. Its questions and its one sentence per pick are
+  // capped in words; a longer one is replaced by the server's own.
+  CONCIERGE_MAX_USER_MESSAGES: count(8),
+  CONCIERGE_QUESTION_MAX_WORDS: count(30),
+  CONCIERGE_REASON_MAX_WORDS: count(40),
   // Distinct guests per Toronto day who may use the AI features, not conversations: a
   // guest's new chats never take another slot (DECISIONS B36). The name predates that and
   // is kept so the GitHub secret and server .env need no change.
@@ -62,6 +68,8 @@ const schema = z.object({
   // The same scoring.yaml the pipeline reads, so note scores and fragrance scores
   // share one set of numbers. Relative to the API's working directory.
   SCORING_CONFIG_PATH: z.string().default("../pipeline/config/scoring.yaml"),
+  // The concierge's occasions, score weights, and projection bands (M10).
+  OCCASIONS_CONFIG_PATH: z.string().default("../pipeline/config/occasions.yaml"),
 
   // Signs the session cookie. 32 characters is the floor for an HMAC-SHA256 key.
   JWT_SECRET: z.string().min(32, "JWT_SECRET must be at least 32 characters"),
@@ -113,7 +121,7 @@ export type AuthSettings = {
 
 const MINUTE_MS = 60_000;
 
-// The slice of the config the chat, the caps, and the admin report need.
+// The slice of the config the chat, the concierge, the caps, and the admin report need.
 export type AiSettings = {
   apiKey: string;
   model: string;
@@ -128,6 +136,9 @@ export type AiSettings = {
   namedBottleWeight: number;
   namedMinWeight: number;
   namedMax: number;
+  conciergeMaxUserMessages: number;
+  conciergeQuestionMaxWords: number;
+  conciergeReasonMaxWords: number;
   guestDailyConversationCap: number;
   inputUsdPerMTok: number;
   outputUsdPerMTok: number;
@@ -153,6 +164,9 @@ export function aiSettings(config: z.infer<typeof aiSchema>): AiSettings {
     namedBottleWeight: config.CHAT_NAMED_BOTTLE_WEIGHT,
     namedMinWeight: config.CHAT_NAMED_MIN_WEIGHT,
     namedMax: config.CHAT_NAMED_MAX,
+    conciergeMaxUserMessages: config.CONCIERGE_MAX_USER_MESSAGES,
+    conciergeQuestionMaxWords: config.CONCIERGE_QUESTION_MAX_WORDS,
+    conciergeReasonMaxWords: config.CONCIERGE_REASON_MAX_WORDS,
     guestDailyConversationCap: config.GUEST_DAILY_CONVERSATION_CAP,
     inputUsdPerMTok: config.LLM_INPUT_USD_PER_MTOK,
     outputUsdPerMTok: config.LLM_OUTPUT_USD_PER_MTOK,

@@ -3,12 +3,16 @@ import { createApp, type AiDeps } from "../app.js";
 import { aiDefaults, authSettings, loadConfig } from "../config.js";
 import type { Llm, LlmRequest, LlmResponse } from "../services/llm.js";
 import { loadCatalogueSettings } from "../services/catalogue.js";
+import { loadConciergeSettings } from "../services/occasions.js";
 import { loadMatrices } from "../services/scoring.js";
 
 // The real scoring.yaml, so tests fail if the file and the API drift apart.
 export const SCORING_PATH = fileURLToPath(new URL("../../../pipeline/config/scoring.yaml", import.meta.url));
 export const matrices = loadMatrices(SCORING_PATH);
 export const settings = loadCatalogueSettings(SCORING_PATH);
+// The real occasions.yaml, for the same reason.
+export const OCCASIONS_PATH = fileURLToPath(new URL("../../../pipeline/config/occasions.yaml", import.meta.url));
+export const concierge = loadConciergeSettings(OCCASIONS_PATH);
 
 // The real config loader with test values: cost 4 so hashing is quick, and the default
 // limits (5 per 15 minutes for login, 5 per hour for signup) so the tests check them.
@@ -73,7 +77,7 @@ export function modelJson(overrides: Record<string, unknown> = {}): Partial<LlmR
 
 // AI settings with test-friendly defaults; pass overrides for the number under test.
 export function aiWith(llm: Llm | null, overrides: Partial<AiDeps["settings"]> = {}): AiDeps {
-  return { settings: { ...aiDefaults(), adminToken: "test-admin-token-0123456789", ...overrides }, llm };
+  return { settings: { ...aiDefaults(), adminToken: "test-admin-token-0123456789", ...overrides }, llm, concierge };
 }
 
 // A 14-value family profile with all its weight on one ring position.

@@ -1,21 +1,31 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { BottleImage } from "../../components/BottleImage";
 import { FamilyTag, Tag } from "../../components/ui";
 import type { ChatMessage, ChatRecommendation } from "../../lib/api";
 import { useOwnedIds } from "../../lib/collection";
 
-// The open chat's messages, in their own scrolling area inside the chat panel, so the
+// What every conversation message has. The chat adds recommendations; the concierge
+// adds answer chips and picks, drawn by `renderBelow`.
+export type BaseMessage = { role: "user" | "assistant"; content: string };
+
+// The open conversation's messages, in their own scrolling area inside the panel, so the
 // page never grows with the conversation. Every message is rendered as text, never
-// HTML, so whatever a visitor types or the server returns can't become markup.
-export function MessageList({
+// HTML, so whatever a visitor types or the server returns can't become markup. The chat
+// and the concierge (DECISIONS B37) share it: each passes its own introduction and what
+// to draw under a reply (the chat's default: its recommendation cards).
+export function MessageList<M extends BaseMessage>({
   messages,
   pending,
   showHint,
+  introduction = <Introduction />,
+  renderBelow = chatRecommendations,
 }: {
-  messages: ChatMessage[];
+  messages: M[];
   pending: string | null;
-  showHint: boolean; // the introduction and an example, only while the chat can take a message
+  showHint: boolean; // the introduction and an example, only while the conversation can take a message
+  introduction?: ReactNode;
+  renderBelow?: (message: M, index: number) => ReactNode;
 }) {
   const { box, onScroll, behind, toBottom } = useStickToBottom(messages.length + (pending ? 1 : 0), pending !== null);
   return (
@@ -28,15 +38,15 @@ export function MessageList({
         onScroll={onScroll}
         className="@container relative h-full overflow-y-auto overscroll-contain px-4 py-5 sm:px-6"
       >
-        {showHint && messages.length === 0 && pending === null && <Introduction />}
+        {showHint && messages.length === 0 && pending === null && introduction}
         {/* aria-live reads each new reply aloud for screen readers as it arrives. */}
         <ol aria-live="polite" className="m-0 grid list-none gap-5 p-0">
           {messages.map((message, index) => (
-            <Message key={index} message={message} />
+            <Message key={index} message={message} below={renderBelow(message, index)} />
           ))}
           {pending !== null && (
             <>
-              <Message message={{ role: "user", content: pending, recommendations: [] }} />
+              <Message message={{ role: "user", content: pending }} below={null} />
               <li role="status" className="font-display text-lg text-dim italic">
                 Thinking…
               </li>
@@ -71,7 +81,7 @@ function Introduction() {
   );
 }
 
-function Message({ message }: { message: ChatMessage }) {
+function Message({ message, below }: { message: BaseMessage; below: ReactNode }) {
   if (message.role === "user") {
     return (
       <li className="ml-auto max-w-[85%] border border-line-control bg-sunken px-4 py-3">
@@ -84,9 +94,14 @@ function Message({ message }: { message: ChatMessage }) {
     <li className="max-w-[95%]">
       <span className="sr-only">Assistant: </span>
       <p className="m-0 font-display text-xl leading-snug whitespace-pre-line text-text">{message.content}</p>
-      {message.recommendations.length > 0 && <Recommendations items={message.recommendations} />}
+      {below}
     </li>
   );
+}
+
+function chatRecommendations(message: BaseMessage): ReactNode {
+  const items = (message as Partial<ChatMessage>).recommendations ?? [];
+  return items.length > 0 ? <Recommendations items={items} /> : null;
 }
 
 // The server's picks: owned bottles first, then new ones that suit you better.
