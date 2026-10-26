@@ -5,6 +5,7 @@ import { loadCatalogueSettings } from "./services/catalogue.js";
 import { anthropicLlm, createAnthropicClient } from "./services/llm.js";
 import { loadConciergeSettings } from "./services/occasions.js";
 import { loadMatrices } from "./services/scoring.js";
+import { startWarmups, warmupSchemas, warmupsEnabled } from "./services/warmup.js";
 
 const config = loadConfig();
 const ai = aiSettings(config);
@@ -14,8 +15,9 @@ const llm = ai.apiKey
   : null;
 if (!llm) console.warn("ANTHROPIC_API_KEY is not set: the chat and the concierge will report the assistant as unavailable.");
 
+const db = createPool(config.DATABASE_URL);
 const app = createApp(
-  createPool(config.DATABASE_URL),
+  db,
   loadMatrices(config.SCORING_CONFIG_PATH),
   loadCatalogueSettings(config.SCORING_CONFIG_PATH),
   authSettings(config),
@@ -25,4 +27,9 @@ const app = createApp(
 
 app.listen(config.PORT, () => {
   console.log(`API listening on port ${config.PORT}`);
+  // Keeps Anthropic's schema cache warm (DECISIONS B40). Started after listening and
+  // never awaited, so a slow or failing warm-up can't hold up startup.
+  if (llm && warmupsEnabled(ai)) {
+    startWarmups({ llm, db, schemas: warmupSchemas(), intervalMs: ai.warmupIntervalMs, retryMs: ai.warmupRetryMs });
+  }
 });

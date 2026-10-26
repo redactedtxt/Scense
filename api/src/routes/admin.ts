@@ -6,6 +6,7 @@ import type { Db } from "../db.js";
 import { ApiError } from "../middleware/errors.js";
 import { parseInput } from "../middleware/validate.js";
 import { torontoDay } from "../services/caps.js";
+import { WARMUP_SUBJECT } from "../services/warmup.js";
 
 // GET /api/admin/usage (SPEC section 10): AI usage per day for Tejas, behind the
 // ADMIN_TOKEN secret sent in an X-Admin-Token header. With no token configured the
@@ -44,10 +45,12 @@ export function adminRouter(db: Db, ai: AiSettings, now: () => number = Date.now
 // messages per feature, and tokens. Chats and outings started are counted from
 // chat_conversations, so days older than CHAT_RETENTION_DAYS undercount as they are
 // deleted; the other columns come from llm_usage, which keeps no text and is never purged.
+// The schema warm-ups (B40) are no visitor: their tokens are in the totals and also on
+// their own, so their cost shows.
 async function usageByDay(db: Db, where: string, params: unknown[]) {
   const { rows } = await db.query(
     `SELECT u.day::text AS day,
-            count(DISTINCT u.subject)::int AS visitors,
+            count(DISTINCT u.subject) FILTER (WHERE u.subject <> '${WARMUP_SUBJECT}')::int AS visitors,
             count(DISTINCT u.subject) FILTER (WHERE u.subject LIKE 'guest:%')::int AS guests,
             (SELECT count(*) FROM chat_conversations c
               WHERE c.feature = 'chat' AND (c.created_at AT TIME ZONE 'America/Toronto')::date = u.day)::int AS chats_started,
@@ -56,7 +59,9 @@ async function usageByDay(db: Db, where: string, params: unknown[]) {
             sum(u.user_messages)::int AS user_messages,
             (sum(u.user_messages) FILTER (WHERE u.feature = 'concierge'))::int AS concierge_messages,
             sum(u.input_tokens)::bigint AS input_tokens,
-            sum(u.output_tokens)::bigint AS output_tokens
+            sum(u.output_tokens)::bigint AS output_tokens,
+            coalesce(sum(u.input_tokens) FILTER (WHERE u.subject = '${WARMUP_SUBJECT}'), 0)::bigint AS warmup_input_tokens,
+            coalesce(sum(u.output_tokens) FILTER (WHERE u.subject = '${WARMUP_SUBJECT}'), 0)::bigint AS warmup_output_tokens
        FROM llm_usage u
       WHERE ${where}
       GROUP BY u.day ORDER BY u.day DESC`,
@@ -79,6 +84,8 @@ function withCost(r: Record<string, unknown>, ai: AiSettings) {
     inputTokens,
     outputTokens,
     estimatedUsd: cost(inputTokens, outputTokens, ai),
+    // Already inside the two token counts and estimatedUsd above.
+    warmupEstimatedUsd: cost(Number(r.warmup_input_tokens ?? 0), Number(r.warmup_output_tokens ?? 0), ai),
   };
 }
 
@@ -95,6 +102,7 @@ function total(days: DayUsage[]) {
     inputTokens: sum((d) => d.inputTokens),
     outputTokens: sum((d) => d.outputTokens),
     estimatedUsd: round(sum((d) => d.estimatedUsd)),
+    warmupEstimatedUsd: round(sum((d) => d.warmupEstimatedUsd)),
   };
 }
 

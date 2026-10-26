@@ -104,7 +104,7 @@ export type OutingScore = { entry: CatalogueEntry; score: number; terms: OutingT
 // The lowest and highest share across the catalogue, per season and per day/night.
 export type ShareRanges = Record<string, [number, number]>;
 
-const PICKS = 3; // the top pick and 2 alternatives
+export const PICKS = 3; // the top pick and 2 alternatives
 
 // Full credit inside the projection's strength band, `oneStep` one step outside it,
 // `beyond` further out. Low wants 1-2, medium 2-3, high 3-4 (occasions.yaml).

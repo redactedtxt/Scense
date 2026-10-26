@@ -95,4 +95,15 @@ describe("GET /api/admin/usage", () => {
     expect(res.body).toMatchObject({ model: "claude-haiku-5-5", today: "2026-10-21", guestDailyConversationCap: 100 });
     expect(calls[0]!.params).toEqual(["2026-10-21", 7]);
   });
+
+  it("leaves the schema warm-ups out of the visitors and shows their cost on its own", async () => {
+    const now = () => Date.UTC(2026, 9, 21, 16);
+    const warm = { ...day, warmup_input_tokens: "1500", warmup_output_tokens: "5" };
+    const { app, calls } = appWith([[/FROM llm_usage/, [warm]]], now, aiWith(null));
+    const res = await request(app).get("/api/admin/usage?days=7").set("X-Admin-Token", TOKEN);
+    expect(calls[0]!.sql).toContain("FILTER (WHERE u.subject <> 'system:warmup')::int AS visitors");
+    // 1,500 × $0.10/M + 5 × $0.50/M = $0.00015 + $0.0000025, rounded to 4 places
+    expect(res.body.days[0]).toMatchObject({ warmupEstimatedUsd: 0.0002, estimatedUsd: 0.0022 });
+    expect(res.body.monthToDate).toMatchObject({ warmupEstimatedUsd: 0.0002 });
+  });
 });
