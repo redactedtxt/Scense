@@ -23,8 +23,17 @@ const aiSchema = z.object({
   // (e2e/mock-anthropic.mjs), so the real API code runs end to end and nothing is billed.
   ANTHROPIC_BASE_URL: z.string().default(""),
   LLM_MAX_TOKENS: count(400),
-  // A stuck call should fail fast and show the friendly message, not hang the page.
-  LLM_TIMEOUT_SECONDS: count(20),
+  // A stuck call should fail with the friendly message, not hang the page. 45 s leaves
+  // room for a structured-output call whose schema has gone cold in Anthropic's cache
+  // (compiling it can take most of 20 s); the warm-ups below should keep that rare
+  // (DECISIONS B40).
+  LLM_TIMEOUT_SECONDS: count(45),
+  // Every this many hours, and once at startup, one tiny call per structured-output
+  // schema keeps it in Anthropic's schema cache, which forgets a schema after 24 hours
+  // unused. 0 turns warm-ups off. A failed warm-up is tried again after
+  // LLM_WARMUP_RETRY_MINUTES.
+  LLM_WARMUP_HOURS: count(20),
+  LLM_WARMUP_RETRY_MINUTES: count(15),
   CHAT_MAX_USER_MESSAGES: count(8),
   // How many earlier messages (user or assistant, each one a turn) go back to the model.
   CHAT_HISTORY_TURNS: count(8),
@@ -131,6 +140,8 @@ export type AiSettings = {
   baseUrl: string; // "" = Anthropic itself
   maxTokens: number;
   timeoutMs: number;
+  warmupIntervalMs: number; // 0 = no warm-ups
+  warmupRetryMs: number;
   maxUserMessages: number;
   historyTurns: number;
   messageMaxChars: number;
@@ -160,6 +171,8 @@ export function aiSettings(config: z.infer<typeof aiSchema>): AiSettings {
     baseUrl: config.ANTHROPIC_BASE_URL.trim(),
     maxTokens: config.LLM_MAX_TOKENS,
     timeoutMs: config.LLM_TIMEOUT_SECONDS * 1000,
+    warmupIntervalMs: config.LLM_WARMUP_HOURS * 60 * MINUTE_MS,
+    warmupRetryMs: config.LLM_WARMUP_RETRY_MINUTES * MINUTE_MS,
     maxUserMessages: config.CHAT_MAX_USER_MESSAGES,
     historyTurns: config.CHAT_HISTORY_TURNS,
     messageMaxChars: config.CHAT_MESSAGE_MAX_CHARS,

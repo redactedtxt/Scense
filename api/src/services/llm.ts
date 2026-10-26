@@ -11,6 +11,8 @@ export type LlmRequest = {
   messages: LlmMessage[];
   // JSON schema the reply must follow (Anthropic structured outputs).
   schema: Record<string, unknown>;
+  // Overrides LLM_MAX_TOKENS for this call. Only the schema warm-ups use it (warmup.ts).
+  maxTokens?: number;
 };
 
 export type LlmResponse = {
@@ -40,13 +42,13 @@ export function createAnthropicClient(apiKey: string, timeoutMs: number, baseUrl
 
 export function anthropicLlm(client: MessagesClient, model: string, maxTokens: number): Llm {
   return {
-    async complete({ system, messages, schema }) {
+    async complete({ system, messages, schema, maxTokens: callMaxTokens }) {
       let response: Anthropic.Message;
       const started = Date.now();
       try {
         response = await client.messages.create({
           model,
-          max_tokens: maxTokens,
+          max_tokens: callMaxTokens ?? maxTokens,
           system,
           messages,
           // Thinking would count against the 400-token cap (SPEC section 10) and could

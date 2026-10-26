@@ -51,6 +51,8 @@ export default defineConfig({
         BCRYPT_COST: "4",
         ANTHROPIC_API_KEY: "e2e-fake-key-not-a-real-key",
         ANTHROPIC_BASE_URL: `http://localhost:${MOCK_PORT}`,
+        // No schema warm-ups: they would race the tests' call counts on the fake.
+        LLM_WARMUP_HOURS: "0",
       },
     },
     {
