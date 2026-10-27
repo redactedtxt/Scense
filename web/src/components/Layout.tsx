@@ -4,9 +4,9 @@ import { useStorageBlocked } from "../lib/collection";
 import { loginHref, useSession, useSignOut } from "../lib/session";
 import { Logo } from "./Logo";
 
-// Only pages that exist get a link.
+// Only pages that exist get a link. The logo links to the home page ("/").
 const NAV_ITEMS = [
-  { to: "/", label: "Pair" },
+  { to: "/pair", label: "Layer" },
   { to: "/browse", label: "Browse" },
   { to: "/chat", label: "Chat" },
   { to: "/concierge", label: "Concierge" },
@@ -73,7 +73,6 @@ function Header() {
             <NavLink
               key={item.to}
               to={item.to}
-              end={item.to === "/"}
               onClick={() => setMenuOpen(false)}
               className={({ isActive }) =>
                 `relative text-[11px] font-medium tracking-[0.11em] uppercase transition-colors duration-[180ms] hover:text-text-bright ${

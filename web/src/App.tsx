@@ -7,16 +7,19 @@ import { BrowsePage } from "./pages/BrowsePage";
 import { ChatPage } from "./pages/ChatPage";
 import { ConciergePage } from "./pages/ConciergePage";
 import { FragrancePage } from "./pages/FragrancePage";
+import { HomePage } from "./pages/HomePage";
 import { MePage } from "./pages/MePage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { PairingPage } from "./pages/pairing/PairingPage";
 
-// Pass 1 pages, the M7 account pages, the M9 chat, and the M10 concierge.
+// Pass 1 pages, the M7 account pages, the M9 chat, the M10 concierge, and the home page
+// that took "/" from the pairing page before launch (DECISIONS B41).
 export const routes: RouteObject[] = [
   {
     element: <Layout />,
     children: [
-      { path: "/", element: <PairingPage /> },
+      { path: "/", element: <HomePage /> },
+      { path: "/pair", element: <PairingPage /> },
       { path: "/browse", element: <BrowsePage /> },
       { path: "/f/:slug", element: <FragrancePage /> },
       { path: "/chat", element: <ChatPage /> },

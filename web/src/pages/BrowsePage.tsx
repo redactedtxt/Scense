@@ -74,7 +74,7 @@ export function BrowsePage() {
       <section className="pt-[58px] pb-10 sm:pt-[72px] sm:pb-12">
         <p className="kicker">The catalogue</p>
         <h1 className="mt-4 mb-5 font-display text-[54px] leading-[0.88] font-medium tracking-display sm:text-[clamp(54px,6.2vw,88px)]">
-          Browse <em className="font-normal text-gold-pale">every bottle.</em>
+          Browse <em className="accent">every bottle.</em>
         </h1>
         <p className="m-0 max-w-[485px] font-display text-lg leading-[1.45] text-soft sm:text-xl">
           The most-voted fragrances on Fragrantica, with notes, accords, and community ratings.

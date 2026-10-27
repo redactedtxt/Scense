@@ -54,7 +54,7 @@ function Hero() {
         <h1 className="mt-4 mb-5 font-display text-[54px] leading-[0.88] font-medium tracking-display sm:mt-[18px] sm:text-[clamp(54px,6.2vw,88px)]">
           Find your perfect
           <br />
-          <em className="font-normal text-gold-pale">second scent.</em>
+          <em className="accent">second scent.</em>
         </h1>
         <p className="m-0 max-w-[320px] font-display text-lg leading-[1.45] text-soft sm:max-w-[485px] sm:text-xl">
           Start from a bottle you own or a few notes you love. Scense ranks what to layer with them, to amplify the

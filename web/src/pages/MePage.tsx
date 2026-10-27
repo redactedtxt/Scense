@@ -8,6 +8,7 @@ import { TasteProfileCard } from "../components/TasteProfileCard";
 import { Notice, Tag, TextTabs } from "../components/ui";
 import { useCollectionView, useGuestImportable } from "../lib/collection";
 import type { CollectionStatus, SavedFragrance } from "../lib/guestStore";
+import { pairHref } from "./pairing/usePairingParams";
 
 const PANEL_ID = "collection-panel";
 const EMPTY_MESSAGES: Record<CollectionStatus, string> = {
@@ -38,7 +39,7 @@ export function MePage() {
         <section>
           <p className="kicker">Your collection</p>
           <h1 className="mt-4 mb-5 font-display text-[54px] leading-[0.88] font-medium tracking-display sm:text-[clamp(54px,6.2vw,88px)]">
-            Own <em className="font-normal text-gold-pale">and want.</em>
+            Own <em className="accent">and want.</em>
           </h1>
           <p className="m-0 max-w-[485px] font-display text-lg leading-[1.45] text-soft sm:text-xl">
             {signedIn
@@ -128,7 +129,7 @@ function CollectionCard({ item }: { item: SavedFragrance }) {
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-3">
         <CollectionButtons fragrance={item} size="compact" name={item.name} />
         <Link
-          to={`/?f=${item.slug}`}
+          to={pairHref(item.slug)}
           className="inline-flex items-center gap-1.5 text-[9px] font-semibold tracking-label text-gold-kicker uppercase hover:text-gold-bright"
         >
           Pair this <ArrowIcon className="stroke-current" />

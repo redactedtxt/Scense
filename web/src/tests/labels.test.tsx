@@ -1,5 +1,5 @@
 import { familyColor, genderLabel, joinWords, seasonLabel } from "../lib/labels";
-import { ringDistance } from "../pages/AboutPage";
+import { ringDistance } from "../pages/about/RingDistance";
 
 describe("display labels", () => {
   it("shows Men, Women, Unisex, and Fall for the stored values", () => {

@@ -14,7 +14,7 @@ const COPY: Record<Mode, { title: string; kicker: string; heading: ReactNode; in
     kicker: "Create an account",
     heading: (
       <>
-        Keep your <em className="font-normal text-gold-pale">collection.</em>
+        Keep your <em className="accent">collection.</em>
       </>
     ),
     intro: "An account saves your Own and Want lists on our server, so they follow you to any browser.",
@@ -25,7 +25,7 @@ const COPY: Record<Mode, { title: string; kicker: string; heading: ReactNode; in
     kicker: "Welcome back",
     heading: (
       <>
-        Sign <em className="font-normal text-gold-pale">in.</em>
+        Sign <em className="accent">in.</em>
       </>
     ),
     intro: "Your Own and Want lists are waiting where you left them.",

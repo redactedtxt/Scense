@@ -1,22 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Link } from "react-router";
-import { ringPoint } from "../components/FamilyWheel";
-import { Segmented } from "../components/ui";
-import { api, type Family, type Goal } from "../lib/api";
+import { api, type Family } from "../lib/api";
 import { familyColor } from "../lib/labels";
 import { useFamilies } from "../lib/queries";
+import { RingDistance } from "./about/RingDistance";
+import { PAIR_PATH, pairHref } from "./pairing/usePairingParams";
 
-const RING_SIZE = 14;
 // The project's own example pair (DECISIONS B17): a well-known Aventus alternative.
 const EXAMPLE_BASE = { slug: "creed-aventus-2010", name: "Creed Aventus" };
 const EXAMPLE_PARTNER = { slug: "armaf-club-de-nuit-intense-man-2015", name: "Club de Nuit Intense Man" };
-
-// Ring distance: steps around the shorter way, 0 to 7.
-export function ringDistance(i: number, j: number): number {
-  const gap = Math.abs(i - j);
-  return Math.min(gap, RING_SIZE - gap);
-}
 
 // "/about": how the scores work, for recruiters and curious users.
 export function AboutPage() {
@@ -27,7 +20,7 @@ export function AboutPage() {
       <section className="pt-[58px] pb-12 sm:pt-[72px] sm:pb-16">
         <p className="kicker">How Scense works</p>
         <h1 className="mt-4 mb-5 font-display text-[54px] leading-[0.88] font-medium tracking-display sm:text-[clamp(54px,6.2vw,88px)]">
-          Two goals, <em className="font-normal text-gold-pale">one wheel.</em>
+          Two goals, <em className="accent">one wheel.</em>
         </h1>
         <p className="m-0 max-w-[560px] font-display text-lg leading-[1.45] text-soft sm:text-xl">
           Every layering score comes from the fragrance wheel, community votes, and a short list of tunable numbers.
@@ -49,12 +42,11 @@ export function AboutPage() {
       </Step>
 
       <Step number="02" title="Ring distance">
-        <p>
-          Distance is the number of steps between two families the short way round, from 0 (same family) to 7 (directly
-          opposite): <code className="text-gold-bright">d = min(|i − j|, 14 − |i − j|)</code>. Pick a family to see its
-          distance to every other one.
-        </p>
-        {families.data ? <RingDiagram families={families.data.items} /> : <div className="skeleton mt-8 aspect-square w-full max-w-[560px]" />}
+        {families.data ? (
+          <RingDistance families={families.data.items} />
+        ) : (
+          <div className="skeleton aspect-square w-full max-w-[640px]" />
+        )}
       </Step>
 
       <Step number="03" title="Enhance: more of what you have">
@@ -102,7 +94,7 @@ export function AboutPage() {
         </p>
         <p className="mt-8">
           <Link
-            to="/"
+            to={PAIR_PATH}
             className="inline-flex h-[46px] items-center bg-gold-deep px-6 text-[10px] font-semibold tracking-label text-on-gold uppercase hover:bg-gold"
           >
             Try a pairing
@@ -129,114 +121,7 @@ function Step({ number, title, children }: { number: string; title: string; chil
 }
 
 function Em({ children }: { children: ReactNode }) {
-  return <em className="font-display text-[1.15em] text-gold-pale">{children}</em>;
-}
-
-// The 14 families on a ring. Choosing one labels every other family with its distance
-// and shades it by which goal that distance favours.
-function RingDiagram({ families }: { families: Family[] }) {
-  const [selected, setSelected] = useState(0);
-  const [goal, setGoal] = useState<Goal>("enhance");
-  const size = 560;
-  const c = size / 2;
-
-  return (
-    <div className="mt-8">
-      <div className="mb-6 max-w-[280px]">
-        <Segmented
-          label="Shade by goal"
-          options={[
-            { value: "enhance", label: "Enhance" },
-            { value: "soften", label: "Soften" },
-          ]}
-          value={goal}
-          onChange={setGoal}
-        />
-      </div>
-      <svg viewBox={`0 0 ${size} ${size}`} className="w-full max-w-[560px]" role="group" aria-label="Fragrance wheel">
-        <circle cx={c} cy={c} r={c * 0.62} fill="none" stroke="var(--color-line-strong)" />
-        {families.map((family) => {
-          const d = ringDistance(selected, family.id);
-          return (
-            <RingNode
-              key={family.id}
-              family={family}
-              centre={c}
-              distance={d}
-              selected={family.id === selected}
-              strength={goal === "enhance" ? Math.max(0, 1 - d / 4) : d / 7}
-              onSelect={() => setSelected(family.id)}
-            />
-          );
-        })}
-        <text x={c} y={c - 6} textAnchor="middle" className="fill-text font-display text-[26px]">
-          {families[selected]?.name}
-        </text>
-        <text x={c} y={c + 20} textAnchor="middle" className="fill-dim text-[11px] tracking-[0.13em] uppercase">
-          {goal === "enhance" ? "Brighter = closer = enhances" : "Brighter = farther = softens"}
-        </text>
-      </svg>
-    </div>
-  );
-}
-
-function RingNode(props: {
-  family: Family;
-  centre: number;
-  distance: number;
-  selected: boolean;
-  strength: number;
-  onSelect: () => void;
-}) {
-  const { family, centre, distance, selected } = props;
-  const node = ringPoint(centre, centre * 0.62, family.id);
-  const label = ringPoint(centre, centre * 0.86, family.id);
-  return (
-    <g
-      role="button"
-      tabIndex={0}
-      aria-pressed={selected}
-      aria-label={`${family.name}, distance ${distance}`}
-      onClick={props.onSelect}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          props.onSelect();
-        }
-      }}
-      className="cursor-pointer outline-none [&:focus-visible>circle]:stroke-gold [&:focus-visible>circle]:stroke-2"
-    >
-      <circle
-        cx={node.x}
-        cy={node.y}
-        r={selected ? 24 : 20}
-        fill={familyColor(family.name)}
-        fillOpacity={selected ? 1 : 0.15 + 0.75 * props.strength}
-        stroke={selected ? "var(--color-gold-bright)" : "var(--color-ink)"}
-        strokeWidth={selected ? 2 : 1}
-      />
-      {/* A dark outline under the digit keeps it readable on both bright and faded nodes. */}
-      <text
-        x={node.x}
-        y={node.y + 6}
-        textAnchor="middle"
-        paintOrder="stroke"
-        stroke="var(--color-ink)"
-        strokeWidth={3}
-        className="pointer-events-none fill-text-bright font-display text-[18px]"
-      >
-        {selected ? "0" : distance}
-      </text>
-      <text
-        x={label.x}
-        y={label.y + 4}
-        textAnchor="middle"
-        className={`pointer-events-none text-[11px] ${selected ? "fill-text-bright" : "fill-muted"}`}
-      >
-        {family.name}
-      </text>
-    </g>
-  );
+  return <em className="accent font-display text-[1.15em]">{children}</em>;
 }
 
 function HarshnessList({ families }: { families: Family[] }) {
@@ -269,7 +154,7 @@ function LiveExample() {
       <p className="mt-2 mb-0 font-display text-xl leading-snug text-text">
         {EXAMPLE_PARTNER.name}, a well-known alternative to {EXAMPLE_BASE.name}, ranks{" "}
         <span className="text-gold-bright">{figure}</span> in{" "}
-        <Link to={`/?f=${EXAMPLE_BASE.slug}&goal=enhance`} className="underline decoration-gold-line underline-offset-4 hover:text-gold-bright">
+        <Link to={pairHref(EXAMPLE_BASE.slug, "enhance")} className="underline decoration-gold-line underline-offset-4 hover:text-gold-bright">
           Aventus&apos;s Enhance list
         </Link>
         .

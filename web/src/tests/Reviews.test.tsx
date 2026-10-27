@@ -169,12 +169,12 @@ describe("pair ratings on result cards", () => {
       ["/api/pairing/fragrances/", pairing],
       ["/api/fragrances/", () => base],
     ]);
-    renderAt("/?f=base-bottle&goal=soften");
+    renderAt("/pair?f=base-bottle&goal=soften");
     const group = await screen.findByRole("group", { name: "Rate how well Eclaire softened Base Bottle for you" });
     for (const radio of within(group).getAllByRole("radio")) expect(radio).toBeDisabled();
     expect(screen.getByRole("link", { name: "Sign in to rate" })).toHaveAttribute(
       "href",
-      "/login?next=%2F%3Ff%3Dbase-bottle%26goal%3Dsoften",
+      "/login?next=%2Fpair%3Ff%3Dbase-bottle%26goal%3Dsoften",
     );
   });
 
@@ -190,7 +190,7 @@ describe("pair ratings on result cards", () => {
       ["/api/pairing/fragrances/", pairing],
       ["/api/fragrances/", () => base],
     ]);
-    renderAt("/?f=base-bottle&goal=soften");
+    renderAt("/pair?f=base-bottle&goal=soften");
     const group = await screen.findByRole("group", { name: /Eclaire softened Base Bottle/ });
     await waitFor(() => expect(within(group).getByRole("radio", { name: "2 stars" })).toBeChecked());
     expect(requests(fetchMock)).toContain("GET /api/pair-ratings?baseId=1&goal=soften");

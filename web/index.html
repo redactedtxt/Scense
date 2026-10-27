@@ -5,7 +5,31 @@
     <!-- resizes-content: on Android the keyboard shrinks the layout viewport, so the chat
          panel (100dvh) shrinks with it and its input stays in view (DECISIONS B36). -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content" />
-    <title>Scense</title>
+    <title>Scense: fragrance layering, ranked</title>
+    <meta name="description" content="Pick a fragrance you own and Scense ranks the 1,000 most-voted bottles to layer with it, to enhance its scent or soften its edge." />
+    <link rel="icon" href="/favicon.ico" sizes="32x32 48x48" />
+    <link rel="icon" href="/favicon.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#0b0b0a" />
+
+    <!-- Link previews (LinkedIn, Slack, X). Crawlers don't run JavaScript, so these live
+         here, not in React. og:image must be an absolute URL. The image is the home page
+         with drawn placeholder bottles, never Fragrantica's photos (DECISIONS B39, B41). -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Scense" />
+    <meta property="og:url" content="https://scense.name/" />
+    <meta property="og:title" content="Scense: fragrance layering, ranked" />
+    <meta property="og:description" content="Pick a fragrance you own and Scense ranks the 1,000 most-voted bottles to layer with it, to enhance its scent or soften its edge." />
+    <meta property="og:image" content="https://scense.name/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="The Scense home page: a Layer card with two drawn bottles, beside cards for Chat, Concierge, Browse, and Collection." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Scense: fragrance layering, ranked" />
+    <meta name="twitter:description" content="Pick a fragrance you own and Scense ranks the 1,000 most-voted bottles to layer with it, to enhance its scent or soften its edge." />
+    <meta name="twitter:image" content="https://scense.name/og-image.png" />
+    <meta name="twitter:image:alt" content="The Scense home page: a Layer card with two drawn bottles, beside cards for Chat, Concierge, Browse, and Collection." />
   </head>
   <body>
     <div id="root"></div>
