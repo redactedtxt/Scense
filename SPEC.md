@@ -578,7 +578,8 @@ Pages:
 
 | Route | Content |
 |---|---|
-| `/` | Pairing. Tabs: Notes or Fragrance. Goal toggle: Enhance or Soften. Results list with score bars, "Owned" badges, an "Owned only" filter, and a search box that jumps to any fragrance's rank. The page opens with nothing selected: an empty search box and a short prompt in the results area. A shared `?f=<slug>` link still preloads that fragrance |
+| `/` | Home (DECISIONS B41): a one-line welcome, then a card for each feature above the fold at 375, 768, and 1366px: Layer (the largest, gold), Chat, Concierge, Browse, and Collection, each with a title, one line, and a button; plus a "How the scoring works" link to `/about`. A URL carrying a pairing param (`f`, `mode`, `goal`, `notes`) from before the move is sent to `/pair` with the same query string |
+| `/pair` | Pairing. Tabs: Notes or Fragrance. Goal toggle: Enhance or Soften. Results list with score bars, "Owned" badges, an "Owned only" filter, and a search box that jumps to any fragrance's rank. The page opens with nothing selected: an empty search box and a short prompt in the results area. A shared `?f=<slug>` link still preloads that fragrance. Nav label: "Layer" |
 | `/browse` | Catalogue grid with search, gender and family filters, and a sort control (Most popular, the default; Least popular; Highest rated). Search, filters, sort, and page live in the URL; the default sort stays out of it |
 | `/f/:slug` | Fragrance page: pyramid, accords as bars, family profile as a small wheel chart, strength, tags, rating, Want/Own buttons, reviews (pass 2), "Pair this" button |
 | `/chat` | Chatbot: a chat panel, a chat list, and the taste profile card (layout below). The open chat is in the URL (`?c=<id>`); no id is a new chat |
@@ -595,7 +596,7 @@ Header: Scense wordmark, nav, "Sign in" in the top right. Footer on every page: 
 
 ### Design reference
 
-- `design/figma-make/src/App.tsx` and `design/figma-make/src/index.css` are the visual source of truth for the pairing page (`/`). Match its layout, colours, fonts (Cormorant Garamond for display, Inter for body), and spacing. The folder is a reference only. Do not import from it or build it.
+- `design/figma-make/src/App.tsx` and `design/figma-make/src/index.css` are the visual source of truth for the pairing page (`/pair`). Match its layout, colours, fonts (Cormorant Garamond for display, Inter for body), and spacing. The folder is a reference only. Do not import from it or build it.
 - Two rules on the pairing page override the Figma design:
   - In Notes mode, the results summary reads "[N] notes ranked to [enhance/soften] [selected notes]." It never mentions fragrances or a base bottle.
   - The "Find my bottle's rank" finder only appears in Fragrance mode. Hide it in Notes mode.
@@ -691,6 +692,7 @@ Stop after each one. Report: what you built, files to read first, commands to ru
 | M9.1 | Chat layout and multiple chats | Fixed-height chat panel at desktop and 375px; New chat, chat list, reopen and delete; one shared 8-message budget per day across chats; the guest cap counts guests; tests for the shared budget, the guest count, and the race across two chats pass (DECISIONS B36) |
 | M10 | Concierge | Asks for missing slots; empty-collection fallback works |
 | M11 | Polish | Playwright smoke tests (pair a fragrance, sign up and save a bottle, chat once, concierge once) with a mocked Anthropic, run in CI against a test catalogue; the API integration tests run in CI too; README for a recruiter; Lighthouse accessibility ≥ 90 on pairing, browse, fragrance, chat, and concierge; migration 009 (DECISIONS B39) |
+| M12 | Quality of life changes (launch polish) | Home page at `/` with feature cards above the fold at 375, 768, and 1366px; pairing at `/pair` with old links redirected; brighter `soft` text; accent words bold, not italic; the About ring with typeset formula, worked example, labelled clickable nodes, legend, and a phone list; Open Graph and Twitter tags, a 1200x630 preview image, and a favicon; Lighthouse accessibility 100 on every page (DECISIONS B41) |
 
 **Done in M11:** migration `009_drop_llm_usage_conversation_id.sql` drops `llm_usage.conversation_id`. Migration 007 only made it nullable, so the old API container could keep writing it during the 007 deploy; nothing has read or written it since (DECISIONS B36, B39). The column is gone from section 5's `001_init.sql` listing.
 

@@ -10,6 +10,7 @@ import { familyColor, formatCount, genderLabel, percent, SEASON_ORDER, seasonLab
 import { useFragrance } from "../lib/queries";
 import { Reviews } from "./fragrance/Reviews";
 import { NotFoundPage } from "./NotFoundPage";
+import { pairHref } from "./pairing/usePairingParams";
 
 const LAYERS: { key: Layer; label: string }[] = [
   { key: "top", label: "Top" },
@@ -91,7 +92,7 @@ function Summary({ f }: { f: FragranceDetail }) {
       </dl>
       <div className="mt-9 flex flex-wrap items-center gap-3">
         <Link
-          to={`/?f=${f.slug}`}
+          to={pairHref(f.slug)}
           className="inline-flex h-[46px] items-center gap-3 bg-gold-deep px-6 text-[10px] font-semibold tracking-label text-on-gold uppercase transition-colors hover:bg-gold"
         >
           Pair this <ArrowIcon className="stroke-on-gold" />

@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Inter:wght@400;500;600&display=swap");
 @import "tailwindcss";
 
 /*
@@ -14,6 +14,9 @@
 
   --font-display: "Cormorant Garamond", serif;
   --font-sans: "Inter", sans-serif;
+  /* The About page's formula (MathML). System maths fonts: Cambria Math ships with Windows,
+     STIX Two Math with macOS and iOS. */
+  --font-math: "STIX Two Math", "Cambria Math", "Latin Modern Math", math, serif;
 
   /* Surfaces, darkest to lightest */
   --color-ink: #0b0b0a; /* page */
@@ -38,7 +41,10 @@
   --color-text: #ede6d8;
   --color-text-input: #e6dfd3;
   --color-chip-on-text: #ddc49f;
-  --color-soft: #969189; /* intro copy */
+  /* soft is the serif intro and body copy. It was the export's #969189 (6.3:1 on the page)
+     until the launch polish brightened it for reading: 8.2:1 on the page, 7.5:1 on panels,
+     and still a clear step below text (1.9:1 between them) so the hierarchy holds. */
+  --color-soft: #aca79e; /* intro copy, About body, card lines */
   --color-muted: #8f8b83; /* nav, chips */
   /* dim is the faintest colour for text anyone needs to read: 4.7:1 on the bottle frame,
      4.9:1 on panels, 5.4:1 on the page (WCAG AA asks 4.5:1). It was #77736c (3.8:1) until
@@ -48,7 +54,7 @@
 
   /* Gold accents */
   --color-gold-bright: #d3b078; /* scores, emphasis */
-  --color-gold-pale: #cba86f; /* hero em */
+  --color-gold-pale: #cba86f; /* accent words (the accent utility) */
   --color-gold-rank: #c49a60; /* rank numbers */
   --color-gold: #c5934e; /* focus ring, active underline */
   --color-gold-kicker: #b98b4c; /* kickers, eyebrows */
@@ -127,6 +133,12 @@ select:focus-visible,
   outline-offset: 4px;
 }
 
+/* Focusable SVG shapes (the About page's ring) draw their own gold ring around the node,
+   so the box outline would only add a second, misplaced one. */
+svg [tabindex]:focus-visible {
+  outline: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
@@ -147,6 +159,14 @@ select:focus-visible,
   font-weight: 600;
   letter-spacing: var(--tracking-kicker);
   text-transform: uppercase;
+}
+
+/* The gold word in a page title and the key terms in body copy ("profile", "facets").
+   Bold, not italic: at small sizes Cormorant's italic was hard to read (DECISIONS B41). */
+@utility accent {
+  color: var(--color-gold-pale);
+  font-style: normal;
+  font-weight: 700;
 }
 
 /* Small uppercase grey label ("Layering score", tags). */

@@ -75,7 +75,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe("pairing page, Notes mode (SPEC section 11 overrides)", () => {
   it("summarises in notes only and hides the rank finder and Owned switch", async () => {
     standardApi();
-    renderAt("/?mode=notes&notes=Bergamot,Vanilla&goal=soften");
+    renderAt("/pair?mode=notes&notes=Bergamot,Vanilla&goal=soften");
     expect(await screen.findByText("2 notes ranked to soften Bergamot and Vanilla.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Rose" })).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Find my bottle's rank" })).not.toBeInTheDocument();
@@ -84,7 +84,7 @@ describe("pairing page, Notes mode (SPEC section 11 overrides)", () => {
 
   it("removes a note when its chip is pressed", async () => {
     standardApi();
-    renderAt("/?mode=notes&notes=Bergamot,Vanilla");
+    renderAt("/pair?mode=notes&notes=Bergamot,Vanilla");
     await userEvent.click(await screen.findByRole("button", { name: "Remove Vanilla" }));
     const chips = screen.getByRole("list", { name: "Selected notes" });
     expect(within(chips).queryByText(/Vanilla/)).not.toBeInTheDocument();
@@ -92,12 +92,12 @@ describe("pairing page, Notes mode (SPEC section 11 overrides)", () => {
   });
 });
 
-const BASE_URL = `/?f=${base.slug}`;
+const BASE_URL = `/pair?f=${base.slug}`;
 
 describe("pairing page, nothing picked yet (DECISIONS B25)", () => {
   it("opens with an empty search box and a prompt, and asks the API for no partners", async () => {
     const fetchMock = standardApi();
-    renderAt("/");
+    renderAt("/pair");
     expect(await screen.findByText(/Pick a fragrance above to see what to layer with it/)).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Search fragrances" })).toHaveValue("");
     expect(screen.queryByText("Selected")).not.toBeInTheDocument();
@@ -108,14 +108,14 @@ describe("pairing page, nothing picked yet (DECISIONS B25)", () => {
 
   it("prompts in Notes mode with notes-only wording and no notes preselected", async () => {
     standardApi();
-    renderAt("/?mode=notes");
+    renderAt("/pair?mode=notes");
     expect(await screen.findByText("Pick a note or two above to see which notes layer with them.")).toBeInTheDocument();
     expect(screen.getByText("No notes picked yet.")).toBeInTheDocument();
     // SPEC section 11: the notes-mode results area never talks about fragrances.
     expect(within(screen.getByRole("region", { name: "Results" })).queryByText(/fragrance/i)).not.toBeInTheDocument();
   });
 
-  it("still preloads a shared ?f= link", async () => {
+  it("still preloads a shared ?f= link, including one shared before the page moved to /pair", async () => {
     standardApi();
     renderAt(`/?f=${base.slug}&goal=enhance`);
     expect(await screen.findByDisplayValue("Club de Nuit Intense Man")).toBeInTheDocument();
@@ -125,7 +125,7 @@ describe("pairing page, nothing picked yet (DECISIONS B25)", () => {
 
   it("replaces the prompt with results once a fragrance is picked", async () => {
     standardApi();
-    renderAt("/");
+    renderAt("/pair");
     await userEvent.type(await screen.findByRole("combobox", { name: "Search fragrances" }), "club");
     await userEvent.click(await screen.findByRole("option", { name: /Terre d'Hermès/ }));
     expect(await screen.findByRole("heading", { name: "Eclaire" })).toBeInTheDocument();
@@ -147,7 +147,7 @@ describe("bottle thumbnails in the search dropdowns (DECISIONS B26)", () => {
 
   it("shows the photo in the base picker, in a frame whose size is fixed before it loads", async () => {
     listApi([withPhoto]);
-    renderAt("/");
+    renderAt("/pair");
     await userEvent.type(await screen.findByRole("combobox", { name: "Search fragrances" }), "terre");
     const option = await screen.findByRole("option", { name: /Terre d'Hermès/ });
     const photo = option.querySelector("img");
@@ -181,7 +181,7 @@ describe("bottle thumbnails in the search dropdowns (DECISIONS B26)", () => {
 
   it("keeps note suggestions as text, since notes have no bottle", async () => {
     mockApi([["/api/notes", () => ({ items: [{ name: "Rose", dominantFamily: "Floral" }] })]]);
-    renderAt("/?mode=notes");
+    renderAt("/pair?mode=notes");
     await userEvent.type(await screen.findByRole("combobox", { name: "Search notes" }), "ro");
     const option = await screen.findByRole("option", { name: /Rose/ });
     expect(option.querySelector("img")).toBeNull();

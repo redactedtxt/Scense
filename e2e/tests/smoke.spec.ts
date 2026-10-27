@@ -20,7 +20,10 @@ async function pickBase(page: Page, typed: string, option: RegExp) {
 }
 
 test("pairs a fragrance: pick a base, get a ranked list, switch the goal", async ({ page }) => {
+  // Start on the home page and follow its Layer card, as a first-time visitor would.
   await page.goto("/");
+  await page.getByRole("link", { name: "Start layering" }).click();
+  await expect(page).toHaveURL(/\/pair$/);
   await pickBase(page, "aventus", /Aventus/);
 
   await expect(page).toHaveURL(/[?&]f=creed-aventus/);
