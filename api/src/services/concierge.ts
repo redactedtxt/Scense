@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { OCCASIONS, PROJECTIONS, SEASONS, type ConciergeSettings, type Occasion, type Projection, type Season } from "./occasions.js";
+import type { Budget } from "./price.js";
 
 // The concierge's slots (SPEC section 9; DECISIONS B37): what an outing needs before the
 // server can pick a bottle. No database and no model here; routes/concierge.ts does that.
@@ -15,20 +16,35 @@ export type SlotName = (typeof SLOT_NAMES)[number];
 export const TIMES = ["day", "night"] as const;
 export const SETTINGS = ["indoor", "outdoor"] as const;
 
+// Two optional slots (DECISIONS B42), never asked about and never needed for picks:
+//  - budget: up to which approximate tier, or "any". Set by the visitor's words or by a
+//    chip under catalogue picks. It only reorders bottles the visitor doesn't own.
+//  - source: "catalogue" when the visitor wants bottles they don't own ("something I
+//    don't have", or the "Show picks I don't own" chip).
+export const BUDGETS = ["$", "$$", "$$$", "$$$$", "any"] as const;
+export const SOURCES = ["catalogue"] as const;
+export const OPTIONAL_SLOTS = ["budget", "source"] as const;
+export const ALL_SLOTS = [...SLOT_NAMES, ...OPTIONAL_SLOTS] as const;
+export type AnySlot = (typeof ALL_SLOTS)[number];
+
 export type Slots = {
   occasion: Occasion | null;
   time_of_day: (typeof TIMES)[number] | null;
   season: Season | null;
   setting: (typeof SETTINGS)[number] | null;
   projection: Projection | null;
+  budget: (typeof BUDGETS)[number] | null;
+  source: (typeof SOURCES)[number] | null;
 };
 
-export const SLOT_VALUES: Record<SlotName, readonly string[]> = {
+export const SLOT_VALUES: Record<AnySlot, readonly string[]> = {
   occasion: OCCASIONS,
   time_of_day: TIMES,
   season: SEASONS,
   setting: SETTINGS,
   projection: PROJECTIONS,
+  budget: BUDGETS,
+  source: SOURCES,
 };
 
 // What the page and the server's own sentences call each value. Occasion labels come
@@ -38,14 +54,15 @@ const VALUE_LABELS: Record<string, string> = {
   winter: "Winter", spring: "Spring", summer: "Summer", autumn: "Fall",
   indoor: "Indoor", outdoor: "Outdoor",
   low: "Low", medium: "Medium", high: "High",
+  any: "Any", catalogue: "Bottles you don't own",
 };
 
-export function labelOf(slot: SlotName, value: string, settings: ConciergeSettings): string {
+export function labelOf(slot: AnySlot, value: string, settings: ConciergeSettings): string {
   return slot === "occasion" ? settings.occasions[value as Occasion].label : (VALUE_LABELS[value] ?? value);
 }
 
 export function emptySlots(): Slots {
-  return { occasion: null, time_of_day: null, season: null, setting: null, projection: null };
+  return { occasion: null, time_of_day: null, season: null, setting: null, projection: null, budget: null, source: null };
 }
 
 // Stored slots, read back through the same known values, so a hand-edited row can't put
@@ -56,11 +73,20 @@ const storedSlots = z.object({
   season: z.enum(SEASONS).nullable().catch(null),
   setting: z.enum(SETTINGS).nullable().catch(null),
   projection: z.enum(PROJECTIONS).nullable().catch(null),
+  budget: z.enum(BUDGETS).nullable().catch(null),
+  source: z.enum(SOURCES).nullable().catch(null),
 });
 
 export function slotsFrom(stored: unknown): Slots {
   const parsed = storedSlots.safeParse(stored ?? {});
   return parsed.success ? parsed.data : emptySlots();
+}
+
+// A budget slot as the scorer reads it: "$$" means up to $$, "any" means none.
+export function budgetOf(slots: Slots): Budget | null {
+  const choice = slots.budget;
+  if (choice === null || choice === "any") return null;
+  return { kind: "upTo", tier: choice.length as 1 | 2 | 3 | 4 };
 }
 
 // Missing slots in the order the concierge asks about them, one at a time.
@@ -115,7 +141,7 @@ export function chipAnswer(slot: SlotName, message: string, settings: ConciergeS
 // --- what the model extracted ---------------------------------------------------------
 
 export type ExtractedSlot = { value: string | null; evidence: string };
-export type Extracted = Record<SlotName, ExtractedSlot>;
+export type Extracted = Record<AnySlot, ExtractedSlot>;
 
 // The old slots plus every value the model found, but only where its evidence is a
 // quote from the visitor's own messages in this outing. A value the model returns with no
@@ -123,8 +149,8 @@ export type Extracted = Record<SlotName, ExtractedSlot>;
 // The model can't clear a slot; it can only fill or change one.
 export function applyExtraction(old: Slots, extracted: Extracted, visitorTexts: string[]): Slots {
   const said = ` ${visitorTexts.map(simplify).join(" | ")} `;
-  const next = { ...old } as Record<SlotName, string | null>;
-  for (const name of SLOT_NAMES) {
+  const next = { ...old } as Record<AnySlot, string | null>;
+  for (const name of ALL_SLOTS) {
     const { value, evidence } = extracted[name];
     if (value === null || !SLOT_VALUES[name].includes(value)) continue;
     const quote = simplify(evidence);
@@ -155,7 +181,34 @@ export function outingLine(slots: Slots, settings: ConciergeSettings): string {
     const label = labelOf(name, value, settings);
     return [name === "projection" ? `${label.toLowerCase()} projection` : name === "occasion" ? label : label.toLowerCase()];
   });
+  if (slots.budget !== null && slots.budget !== "any") parts.push(`up to ${slots.budget} (approximate)`);
   return `Your outing: ${parts.join(", ")}.`;
+}
+
+// --- after the picks (DECISIONS B42) ---------------------------------------------------
+
+export const NEW_PICKS_CHIP = "Show picks I don't own";
+export const BUDGET_CHIPS = ["$", "$$", "$$$", "$$$$", "Any"];
+export const BUDGET_LINE = "Tap a budget to lean the picks toward an approximate price tier.";
+
+// The chips under a set of picks: picks from the Own list offer the catalogue; catalogue
+// picks offer a budget.
+export function afterPicksChips(fromCatalogue: boolean, ownsAny: boolean): string[] {
+  if (fromCatalogue) return BUDGET_CHIPS;
+  return ownsAny ? [NEW_PICKS_CHIP] : [];
+}
+
+// A message that is exactly one of the chips under the picks, once every slot is filled.
+// Free like every chip. Which chips apply follows from the outing, so nothing about the
+// last reply needs storing: catalogue picks have budget chips, Own-list picks the
+// "Show picks I don't own" one.
+export function chipAfterPicks(slots: Slots, message: string, ownsAny: boolean): { slot: AnySlot; value: string } | null {
+  if (missingSlots(slots).length > 0) return null;
+  const said = simplify(message);
+  const fromCatalogue = slots.source === "catalogue" || !ownsAny;
+  if (!fromCatalogue) return said === simplify(NEW_PICKS_CHIP) ? { slot: "source", value: "catalogue" } : null;
+  const budget = BUDGETS.find((value) => value === said || (value === "any" && said === "any"));
+  return budget ? { slot: "budget", value: budget } : null;
 }
 
 // --- the day's last message (DECISIONS B38) ------------------------------------------
@@ -178,6 +231,8 @@ export function assumeMissing(slots: Slots, settings: ConciergeSettings, nowMs: 
     season: slots.season ?? torontoSeason(nowMs, settings),
     setting: slots.setting ?? defaults.setting,
     projection: slots.projection ?? defaults.projection,
+    budget: slots.budget,
+    source: slots.source,
   } as const;
   const assumed = missingSlots(slots).map((name) => {
     if (name === "occasion") return "no occasion, so occasion fit isn't scored";

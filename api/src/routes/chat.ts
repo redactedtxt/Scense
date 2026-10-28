@@ -18,10 +18,11 @@ import {
   type ConversationSummary,
 } from "../services/conversations.js";
 import type { CatalogueCache, CatalogueSnapshot } from "../services/catalogueCache.js";
-import { askModel, composeTurn, CONFUSED_REPLY, finishReply, type Turn } from "../services/chat.js";
+import { askModel, budgetFrom, budgetNote, composeTurn, CONFUSED_REPLY, finishReply, type Turn } from "../services/chat.js";
 import type { Llm } from "../services/llm.js";
 import { matchNamedBottles, namedBottlesNote, namedBottlesUpdate, type NamedBottles } from "../services/namedBottles.js";
 import { loadProfile, ownedIds, saveProfile } from "../services/profileStore.js";
+import { describeBudget, storedBudget, type Budget, type PriceSettings } from "../services/price.js";
 import { buildSystemPrompt } from "../services/prompt.js";
 import { cardsFor, recommend, type Recommendation } from "../services/recommend.js";
 import { createReplyGuard } from "../services/replyGuard.js";
@@ -41,6 +42,8 @@ export type ChatDeps = {
   catalogue: CatalogueCache;
   // The typo search's threshold (scoring.yaml), for looking up bottles a visitor names.
   fuzzyMinSimilarity: number;
+  // scoring.yaml's price section: what a stated budget does to the picks (DECISIONS B42).
+  price: PriceSettings;
   now: () => number;
 };
 
@@ -92,9 +95,10 @@ export function chatRouter(deps: ChatDeps): Router {
 
   router.get("/chat/:id", async (req, res) => {
     const subject = requireSubject(req, res);
-    const conversation = await ownConversation(deps.db, subject, req.params.id);
-    const messages = await transcriptForPage(deps, conversation.id, res.locals.userId as number | null);
-    res.json({ conversation, messages });
+    const { summary, slots } = await ownConversation(deps.db, subject, req.params.id);
+    const messages = await transcriptForPage(deps, summary.id, res.locals.userId as number | null);
+    const budget = storedBudget(slots);
+    res.json({ conversation: summary, messages, budget: budget ? describeBudget(budget, deps.price) : null });
   });
 
   // No refund: the budget is counted in llm_usage, which holds no text and isn't touched.
@@ -128,11 +132,11 @@ type PostBody = {
 };
 
 // The visitor's own chat, or a 404 for a malformed id, someone else's chat, or a chat
-// that was deleted or expired.
-async function ownConversation(db: Db, subject: string, id: string): Promise<ConversationSummary> {
+// that was deleted or expired. A chat's `slots` holds its budget, if one was stated.
+async function ownConversation(db: Db, subject: string, id: string): Promise<{ summary: ConversationSummary; slots: unknown }> {
   const found = chatId.safeParse(id).success ? await findConversation(db, subject, id, FEATURE) : null;
   if (found === null) throw NO_CHAT;
-  return found.summary;
+  return found;
 }
 
 // One user message, start to finish: claim a slot, ask the model, check its answer,
@@ -141,7 +145,8 @@ async function handleMessage(deps: ChatDeps, llm: Llm, subject: string, userId: 
   const { db, ai } = deps;
   const key = { subject, feature: FEATURE, day: torontoDay(deps.now()) };
   // Checked before a slot is claimed, so a message to a missing chat costs nothing.
-  const existing = body.conversationId ? await ownConversation(db, subject, body.conversationId) : null;
+  const found = body.conversationId ? await ownConversation(db, subject, body.conversationId) : null;
+  const existing = found?.summary ?? null;
   const conversationId = existing?.id ?? randomUUID();
   const slot = await reserveMessage(db, key, ai);
   if (slot === "daily_limit") {
@@ -175,21 +180,25 @@ async function handleMessage(deps: ChatDeps, llm: Llm, subject: string, userId: 
       ? composeTurn(result.output, old, createReplyGuard(snapshot), ai.replyMaxWords, namedUpdate(snapshot, named, ai))
       : { reply: CONFUSED_REPLY, profile: old, replaced: false };
   if (userId !== null && result.kind === "ok") await saveProfile(db, userId, turn.profile);
+  // A budget lasts for the rest of this chat, until the visitor states another.
+  const said = result.kind === "ok" ? budgetFrom(result.output.budget, body.message) : null;
+  const budget: Budget | null = said ? said.budget : storedBudget(found?.slots);
 
   // Recommend when the model says it knows enough, or on the last message of the day
   // so a visitor who used all 8 never leaves empty-handed. The server decides either way.
   const ready = result.kind === "ok" && (result.output.ready_to_recommend || slot.userMessages >= ai.maxUserMessages);
   const recommendations = ready && !isBlank(turn.profile)
-    ? await pick(deps, snapshot, turn.profile, { userId, body, conversationId, named })
+    ? await pick(deps, snapshot, turn.profile, { userId, body, conversationId, named, budget })
     : [];
+  const notes = [namedBottlesNote(named), said ? budgetNote(said.budget, deps.price) : null].filter(Boolean);
   const reply =
     result.kind === "ok"
-      ? finishReply(turn.reply, { showingPicks: recommendations.length > 0, note: namedBottlesNote(named) })
+      ? finishReply(turn.reply, { showingPicks: recommendations.length > 0, note: notes.join(" ") || null })
       : turn.reply;
 
   const conversation = await storeExchange(
     db,
-    { id: conversationId, subject, feature: FEATURE },
+    { id: conversationId, subject, feature: FEATURE, slots: budget ? { budget } : null },
     { message: body.message, named: named.matched },
     { content: reply, recommendations: recommendations.map((r) => r.id) },
   );
@@ -198,6 +207,8 @@ async function handleMessage(deps: ChatDeps, llm: Llm, subject: string, userId: 
     reply,
     profile: turn.profile,
     recommendations,
+    // The budget the picks lean toward, in tier symbols, or null (DECISIONS B42).
+    budget: budget ? describeBudget(budget, deps.price) : null,
     degraded: result.kind === "invalid",
     messagesUsed: slot.userMessages,
     messagesLimit: ai.maxUserMessages,
@@ -215,11 +226,12 @@ async function pick(
   deps: ChatDeps,
   snapshot: CatalogueSnapshot,
   profile: TasteProfile,
-  turn: { userId: number | null; body: PostBody; conversationId: string; named: NamedBottles },
+  turn: { userId: number | null; body: PostBody; conversationId: string; named: NamedBottles; budget: Budget | null },
 ): Promise<Recommendation[]> {
   const owned = new Set(turn.userId !== null ? await ownedIds(deps.db, turn.userId) : (turn.body.owned ?? []));
   const exclude = new Set([...(await namedEarlier(deps.db, turn.conversationId)), ...turn.named.matched]);
-  return recommend(snapshot.entries, profile, owned, { ownedMinMatch: deps.ai.ownedMinMatch, exclude });
+  const options = { ownedMinMatch: deps.ai.ownedMinMatch, exclude, budget: turn.budget, price: deps.price };
+  return recommend(snapshot.entries, profile, owned, options);
 }
 
 async function namedEarlier(db: Db, conversationId: string): Promise<number[]> {

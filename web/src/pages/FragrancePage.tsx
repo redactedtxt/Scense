@@ -4,20 +4,16 @@ import { BottleImage } from "../components/BottleImage";
 import { CollectionButtons } from "../components/CollectionButtons";
 import { FamilyWheel } from "../components/FamilyWheel";
 import { ArrowIcon } from "../components/Icons";
+import { BrandLink, CheckPricesLink, PriceLine } from "../components/Price";
 import { FamilyTag, Notice } from "../components/ui";
-import { ApiError, type FragranceDetail, type Layer } from "../lib/api";
+import { ApiError, type FragranceDetail } from "../lib/api";
 import { familyColor, formatCount, genderLabel, percent, SEASON_ORDER, seasonLabel } from "../lib/labels";
 import { useFragrance } from "../lib/queries";
+import { NotePyramid } from "./fragrance/NotePyramid";
 import { Reviews } from "./fragrance/Reviews";
 import { NotFoundPage } from "./NotFoundPage";
 import { pairHref } from "./pairing/usePairingParams";
 
-const LAYERS: { key: Layer; label: string }[] = [
-  { key: "top", label: "Top" },
-  { key: "heart", label: "Heart" },
-  { key: "base", label: "Base" },
-  { key: "flat", label: "Notes" },
-];
 const STRENGTH_STEPS = 4;
 
 // "/f/:slug": one fragrance, with written reviews (M8) at the bottom.
@@ -60,7 +56,9 @@ function Summary({ f }: { f: FragranceDetail }) {
   const meta = [genderLabel(f.gender), f.releaseYear].filter(Boolean).join(" · ");
   return (
     <div className="min-w-0 self-center">
-      <p className="kicker">{f.brand}</p>
+      <p className="kicker">
+        <BrandLink brand={f.brand} />
+      </p>
       <h1 className="mt-4 mb-5 font-display text-[44px] leading-[0.92] font-medium tracking-heading sm:text-[clamp(44px,5vw,72px)]">
         {f.name}
       </h1>
@@ -89,6 +87,7 @@ function Summary({ f }: { f: FragranceDetail }) {
             ))}
           </dd>
         </div>
+        <PriceGuide f={f} />
       </dl>
       <div className="mt-9 flex flex-wrap items-center gap-3">
         <Link
@@ -100,6 +99,20 @@ function Summary({ f }: { f: FragranceDetail }) {
         <CollectionButtons fragrance={f} size="large" />
       </div>
       <p className="mt-3 mb-0 text-[10px] text-dim">Strength comes from community longevity and sillage votes.</p>
+    </div>
+  );
+}
+
+// Price guidance (DECISIONS B42): the approximate tier and the value votes, and a link to
+// today's prices, since the dataset has none.
+function PriceGuide({ f }: { f: FragranceDetail }) {
+  return (
+    <div className="col-span-2 border-t border-line pt-5">
+      <dt className="label-caps text-dim">Price guide</dt>
+      <dd className="m-0 mt-3 flex flex-wrap items-center gap-x-5 gap-y-3">
+        {f.price || f.value ? <PriceLine info={f} /> : <span className="text-[11px] text-dim">No price guide yet.</span>}
+        <CheckPricesLink brand={f.brand} name={f.name} />
+      </dd>
     </div>
   );
 }
@@ -120,7 +133,7 @@ function Details({ f }: { f: FragranceDetail }) {
   return (
     <div className="mt-16 grid grid-cols-1 gap-px border border-line-strong bg-line-strong sm:mt-20 md:grid-cols-2">
       <Panel kicker="Notes" title="The pyramid">
-        <Pyramid notes={f.notes} />
+        <NotePyramid notes={f.notes} />
       </Panel>
       <Panel kicker="Accords" title="What it smells like">
         <Accords accords={f.accords} />
@@ -142,30 +155,6 @@ function Panel({ kicker, title, children }: { kicker: string; title: string; chi
       <h2 className="mt-[7px] mb-6 font-display text-[30px] font-medium">{title}</h2>
       {children}
     </section>
-  );
-}
-
-function Pyramid({ notes }: { notes: FragranceDetail["notes"] }) {
-  const layers = LAYERS.filter((layer) => notes[layer.key].length > 0);
-  if (layers.length === 0) return <p className="m-0 text-xs text-dim">The dataset lists no notes for this fragrance.</p>;
-  return (
-    <dl className="m-0 grid gap-5">
-      {layers.map((layer) => (
-        <div key={layer.key} className="grid grid-cols-1 gap-2 sm:grid-cols-[64px_1fr] sm:gap-4">
-          <dt className="label-caps pt-2.5 text-dim">{layer.label}</dt>
-          <dd className="m-0 flex flex-wrap gap-2">
-            {notes[layer.key].map((note) => (
-              <span
-                key={note.name}
-                className="rounded-full border border-line-control px-3 py-[7px] font-display text-[15px] text-muted"
-              >
-                {note.name}
-              </span>
-            ))}
-          </dd>
-        </div>
-      ))}
-    </dl>
   );
 }
 

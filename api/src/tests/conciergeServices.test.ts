@@ -85,7 +85,9 @@ describe("slots and chips", () => {
   it("asks in a fixed order and reads stored slots through the known values", () => {
     expect(missingSlots(emptySlots())).toEqual(["occasion", "time_of_day", "season", "setting", "projection"]);
     const stored = slotsFrom({ occasion: "wedding", time_of_day: "dusk", season: "autumn", setting: 3 });
-    expect(stored).toEqual({ occasion: "wedding", time_of_day: null, season: "autumn", setting: null, projection: null });
+    expect(stored).toEqual({
+      occasion: "wedding", time_of_day: null, season: "autumn", setting: null, projection: null, budget: null, source: null,
+    });
     expect(missingSlots(stored)).toEqual(["time_of_day", "setting", "projection"]);
     expect(slotsFrom(null)).toEqual(emptySlots());
   });
@@ -94,7 +96,7 @@ describe("slots and chips", () => {
 describe("applyExtraction: a slot needs the visitor's own words", () => {
   const none = { value: null, evidence: "" };
   const extracted = (over: Partial<Extracted>): Extracted => ({
-    occasion: none, time_of_day: none, season: none, setting: none, projection: none, ...over,
+    occasion: none, time_of_day: none, season: none, setting: none, projection: none, budget: none, source: none, ...over,
   });
 
   it("fills a slot that follows directly from a quote ('dinner at 8' means night)", () => {
@@ -150,11 +152,16 @@ function bottle(id: number, family: number, over: Partial<CatalogueEntry> = {}):
     seasons: { winter: 0.25, spring: 0.25, summer: 0.25, autumn: 0.25 },
     daynight: { day: 0.5, night: 0.5 },
     strength: 2,
+    priceTier: null,
+    price: null,
+    value: null,
     ...over,
   };
 }
 
-const DATE_NIGHT: FullSlots = { occasion: "date_night", time_of_day: "night", season: "autumn", setting: "indoor", projection: "medium" };
+const DATE_NIGHT: FullSlots = {
+  occasion: "date_night", time_of_day: "night", season: "autumn", setting: "indoor", projection: "medium", budget: null, source: null,
+};
 
 describe("the concierge score (SPEC section 9 step 3)", () => {
   it("gives full projection credit inside the band, half one step out, none beyond", () => {
@@ -249,7 +256,9 @@ describe("the day's last message: assumed slots (B38)", () => {
 
   it("fills the missing slots with the current season, the time, medium, and indoor, and lists them", () => {
     const { full, assumed } = assumeMissing({ ...emptySlots(), occasion: "office" }, concierge, evening);
-    expect(full).toEqual({ occasion: "office", time_of_day: "night", season: "autumn", setting: "indoor", projection: "medium" });
+    expect(full).toEqual({
+      occasion: "office", time_of_day: "night", season: "autumn", setting: "indoor", projection: "medium", budget: null, source: null,
+    });
     expect(assumed).toEqual(["night", "fall season", "indoor", "medium projection"]);
     expect(assumeMissing({ ...emptySlots(), occasion: "office" }, concierge, afternoon).full.time_of_day).toBe("day");
     expect(assumedLine(assumed)).toBe(
@@ -258,7 +267,10 @@ describe("the day's last message: assumed slots (B38)", () => {
   });
 
   it("keeps what the visitor said, leaves a missing occasion out, and says nothing when nothing was assumed", () => {
-    const said = { occasion: null, time_of_day: "day" as const, season: "winter" as const, setting: "outdoor" as const, projection: null };
+    const said = {
+      occasion: null, time_of_day: "day" as const, season: "winter" as const, setting: "outdoor" as const, projection: null,
+      budget: null, source: null,
+    };
     const { full, assumed } = assumeMissing(said, concierge, evening);
     expect(full).toEqual({ ...said, projection: "medium" });
     expect(assumedLine(assumed)).toBe(

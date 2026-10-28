@@ -80,6 +80,8 @@ function useLegacyPairingLink(): string | null {
   return isPairingLink ? `${PAIR_PATH}${search}${hash}` : null;
 }
 
+const BOTTLE_FRAME = "relative h-full w-[52px] sm:w-[92px] md:w-[134px]";
+
 // The primary card: full width on phones and tablets, the tall left column from 901px.
 // The two drawn bottles stand for a base and its partner; they are decoration only.
 function LayerCard() {
@@ -89,12 +91,13 @@ function LayerCard() {
         aria-hidden="true"
         className="pointer-events-none absolute -top-16 -right-16 size-[260px] rounded-full border border-[rgba(154,116,61,0.14)] shadow-[0_0_0_40px_rgba(154,116,61,0.03),0_0_0_80px_rgba(154,116,61,0.02)] md:size-[340px]"
       />
-      <div aria-hidden="true" className="absolute top-4 right-4 flex h-[74px] items-end sm:top-7 sm:right-8 sm:h-[130px] md:static md:order-2 md:mt-auto md:mb-8 md:h-[190px] md:self-center">
-        <div className="relative h-full w-[52px] sm:w-[92px] md:w-[134px]">
+      {/* Both bottles get the same frame, so they share one height and one baseline. */}
+      <div aria-hidden="true" className="absolute top-4 right-4 flex h-[74px] items-center sm:top-7 sm:right-8 sm:h-[130px] md:static md:order-2 md:mt-auto md:mb-8 md:h-[190px] md:self-center">
+        <div className={BOTTLE_FRAME}>
           <PlaceholderBottle family="Woody Amber" />
         </div>
-        <span className="mb-[30%] font-display text-2xl text-gold-kicker md:text-4xl">+</span>
-        <div className="relative h-[82%] w-[46px] sm:w-[80px] md:w-[116px]">
+        <span className="font-display text-2xl text-gold-kicker md:text-4xl">+</span>
+        <div className={BOTTLE_FRAME}>
           <PlaceholderBottle family="Soft Floral" />
         </div>
       </div>

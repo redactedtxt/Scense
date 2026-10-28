@@ -46,21 +46,25 @@ UPDATE public.fragrances p
        release_year = s.release_year, image_url = s.image_url,
        community_rating = s.community_rating, rating_votes = s.rating_votes,
        profile = s.profile, facets = s.facets, harshness = s.harshness, strength = s.strength,
-       seasons = s.seasons, daynight = s.daynight, search_vector = s.search_vector
+       seasons = s.seasons, daynight = s.daynight, search_vector = s.search_vector,
+       collection = s.collection, price_tier = s.price_tier, value_votes = s.value_votes,
+       value_score = s.value_score
   FROM seed.fragrances s
  WHERE s.id = p.id;
 
 INSERT INTO public.fragrances (id, slug, name, brand, gender, release_year, image_url,
-  community_rating, rating_votes, profile, facets, harshness, strength, seasons, daynight, search_vector)
+  community_rating, rating_votes, profile, facets, harshness, strength, seasons, daynight, search_vector,
+  collection, price_tier, value_votes, value_score)
 SELECT s.id, s.slug, s.name, s.brand, s.gender, s.release_year, s.image_url,
        s.community_rating, s.rating_votes, s.profile, s.facets, s.harshness, s.strength,
-       s.seasons, s.daynight, s.search_vector
+       s.seasons, s.daynight, s.search_vector, s.collection, s.price_tier, s.value_votes,
+       s.value_score
   FROM seed.fragrances s
  WHERE NOT EXISTS (SELECT 1 FROM public.fragrances p WHERE p.id = s.id);
 
 -- 5. Refill the pipeline-only tables. Notes keep their seed ids so the links match.
-INSERT INTO public.notes (id, name, mapped, profile, facets, harshness)
-SELECT id, name, mapped, profile, facets, harshness FROM seed.notes;
+INSERT INTO public.notes (id, name, mapped, profile, facets, harshness, image_url)
+SELECT id, name, mapped, profile, facets, harshness, image_url FROM seed.notes;
 
 INSERT INTO public.fragrance_notes (fragrance_id, note_id, layer)
 SELECT fragrance_id, note_id, layer FROM seed.fragrance_notes;

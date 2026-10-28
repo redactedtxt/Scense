@@ -9,6 +9,8 @@ import { FACET_NAMES, FAMILY_NAMES } from "./taste.js";
 //  2. No links.
 //  3. On topic: the text must mention a family, facet, note, or a scent word.
 //  4. No talk about its own rules ("I won't name fragrances", "my instructions").
+//  5. No prices: no amount of money and no price tier (DECISIONS B42). The server shows
+//     approximate tiers itself; a model's "$120" would read as a fact.
 //
 // Text that fails any check is replaced with a reply the server writes itself from the
 // numbers (chat.ts), so the worst a hostile message can do is skew its own profile.
@@ -46,6 +48,14 @@ const RULE_TALK = [
   /\b(?:the )?(?:website|site|server|catalogue|catalog) (?:will )?(?:picks?|chooses?|selects?|handles?) (?:the )?(?:fragrances|bottles|perfumes|recommendations|picks)\b/i,
 ];
 
+// "$120", "120 dollars", "CAD 90", "€80", and the tier symbols "$$" to "$$$$". A lone
+// "$" is left alone: it is too often part of ordinary punctuation-free text to be a tier.
+const PRICE = /[$€£¥]\s?\d|\d\s?(?:[$€£]|(?:dollars?|bucks|cad|usd|eur|euros?|pounds?)\b)|\b(?:cad|usd|eur)\s?\d|\${2,}/i;
+
+export function statesPrice(text: string): boolean {
+  return PRICE.test(text);
+}
+
 export function mentionsRules(text: string): boolean {
   return RULE_TALK.some((pattern) => pattern.test(text));
 }
@@ -57,7 +67,7 @@ export function withoutRuleTalk(text: string): string {
   return sentences.filter((sentence) => !mentionsRules(sentence)).join("").trim();
 }
 
-export type GuardResult = "ok" | "names_product" | "link" | "mentions_rules" | "off_topic";
+export type GuardResult = "ok" | "names_product" | "link" | "mentions_rules" | "states_price" | "off_topic";
 
 export type ReplyGuard = { check(text: string): GuardResult };
 
@@ -80,6 +90,7 @@ export function createReplyGuard(snapshot: CatalogueSnapshot): ReplyGuard {
     check(text) {
       if (LINK.test(text)) return "link";
       if (mentionsRules(text)) return "mentions_rules";
+      if (statesPrice(text)) return "states_price";
       const padded = ` ${normalize(text)} `;
       for (const phrase of blockedSet) if (padded.includes(` ${phrase} `)) return "names_product";
       for (const word of topicWords) if (padded.includes(` ${word} `)) return "ok";

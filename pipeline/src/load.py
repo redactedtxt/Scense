@@ -59,13 +59,13 @@ def _upsert_notes(cur, notes: pd.DataFrame, cfg: Config) -> dict[str, int]:
             facets = _facet_json(cfg.facet_names, row.facets)
             harshness = float(row.harshness)
         cur.execute(
-            """INSERT INTO notes (name, mapped, profile, facets, harshness)
-               VALUES (%s, %s, %s, %s, %s)
+            """INSERT INTO notes (name, mapped, profile, facets, harshness, image_url)
+               VALUES (%s, %s, %s, %s, %s, %s)
                ON CONFLICT (name) DO UPDATE SET mapped = EXCLUDED.mapped,
                  profile = EXCLUDED.profile, facets = EXCLUDED.facets,
-                 harshness = EXCLUDED.harshness
+                 harshness = EXCLUDED.harshness, image_url = EXCLUDED.image_url
                RETURNING id""",
-            (row.name, bool(row.mapped), profile, facets, harshness),
+            (row.name, bool(row.mapped), profile, facets, harshness, row.image_url),
         )
         ids[row.name] = cur.fetchone()[0]
     return ids
@@ -101,19 +101,22 @@ def _upsert_fragrances(cur, fragrances: pd.DataFrame, cfg: Config) -> list[int]:
     ids = []
     for row in fragrances.itertuples():
         year = None if pd.isna(row.release_year) else int(row.release_year)
+        value_score = None if pd.isna(row.value_score) else float(row.value_score)
         cur.execute(
             """INSERT INTO fragrances (id, slug, name, brand, gender, release_year, image_url,
                  community_rating, rating_votes, profile, facets, harshness, strength,
-                 seasons, daynight)
+                 seasons, daynight, collection, price_tier, value_votes, value_score)
                VALUES (coalesce(%s, nextval(pg_get_serial_sequence('fragrances', 'id'))),
-                       %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, brand = EXCLUDED.brand,
                  gender = EXCLUDED.gender, release_year = EXCLUDED.release_year,
                  image_url = EXCLUDED.image_url, community_rating = EXCLUDED.community_rating,
                  rating_votes = EXCLUDED.rating_votes, profile = EXCLUDED.profile,
                  facets = EXCLUDED.facets, harshness = EXCLUDED.harshness,
                  strength = EXCLUDED.strength, seasons = EXCLUDED.seasons,
-                 daynight = EXCLUDED.daynight
+                 daynight = EXCLUDED.daynight, collection = EXCLUDED.collection,
+                 price_tier = EXCLUDED.price_tier, value_votes = EXCLUDED.value_votes,
+                 value_score = EXCLUDED.value_score
                RETURNING id""",
             (
                 cfg.pinned_ids.get(row.slug), row.slug, row.name, row.brand, row.gender, year,
@@ -122,6 +125,8 @@ def _upsert_fragrances(cur, fragrances: pd.DataFrame, cfg: Config) -> list[int]:
                 [float(x) for x in row.profile], _facet_json(facet_names, row.facets),
                 float(row.harshness), int(row.strength),
                 json.dumps(row.seasons), json.dumps(row.daynight),
+                row.collection if isinstance(row.collection, str) else None,
+                int(row.price_tier), int(row.value_votes), value_score,
             ),
         )  # fmt: skip
         ids.append(cur.fetchone()[0])

@@ -54,7 +54,7 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 ├── .github/workflows/
 │   ├── ci.yml
 │   └── deploy.yml
-├── db/migrations/                # 001_init.sql ... 008_concierge.sql, 009_drop_llm_usage_conversation_id.sql
+├── db/migrations/                # 001_init.sql ... 009_drop_llm_usage_conversation_id.sql, 010_price_and_note_images.sql
 ├── pipeline/
 │   ├── raw/                      # Kaggle files, gitignored
 │   ├── config/
@@ -66,6 +66,8 @@ App name: **Scense**. GitHub repo name: `scense`. Production domain: `https://sc
 │   │   ├── note_aliases.csv      # dataset note spelling/origin variant -> canonical note
 │   │   ├── pinned_ids.csv        # id,slug of the fragrances guests may have saved; never changes (B28)
 │   │   ├── brand_aliases.csv     # search: abbreviation -> brand (YSL -> Yves Saint Laurent)
+│   │   ├── brand_tiers.csv       # brand -> approximate price tier $ to $$$$ (B42)
+│   │   ├── tier_overrides.csv    # lines or bottles in another tier than their brand (B42)
 │   │   ├── name_aliases.csv      # search: misspelling -> word in a fragrance name (myself -> MYSLF)
 │   │   └── occasions.yaml        # concierge: occasion -> family weights, score weights, projection bands (read by the API)
 │   ├── src/
@@ -142,6 +144,8 @@ The wheel lacks gourmand, spicy, and an intensity axis. Facets patch that. Store
 - The `check` column holds `# CHECK` remarks for the human reviewer. **Pipeline code must ignore it** when loading (read only the named columns).
 
 Draft both files from perfumery knowledge, then **stop and ask Tejas to review them** before moving on. Mark any row you feel unsure about with a `# CHECK` comment column.
+
+- Price tiers (Feedback round 1; DECISIONS B42). The dataset has no prices. `brand_tiers.csv` (`brand, tier, check`) gives every catalogue brand, spelled as the dataset spells it, a default tier: `$` to `$$$$`, bands of typical retail for a 100 ml bottle in CAD whose edges live in `scoring.yaml` under `price`. `tier_overrides.csv` (`brand, scope, value, tier, reason, check`) moves a line (`scope` `collection`, the dataset's `collection` field, such as Tom Ford `Private Blend`) or one bottle (`scope` `slug`) to another tier; a slug row wins over a line row. Ingest fails on a catalogue brand with no tier and prints a note for an override that matches nothing. Tejas reviewed both files.
 
 ### 3.4 Fragrance profile
 
@@ -439,6 +443,16 @@ Migration `009_drop_llm_usage_conversation_id.sql` (M11; DECISIONS B39): the con
 ALTER TABLE llm_usage DROP COLUMN conversation_id;
 ```
 
+Migration `010_price_and_note_images.sql` (Feedback round 1; DECISIONS B42): every column can be empty, so the deploy migrates first and the next reseed fills them.
+
+```sql
+ALTER TABLE fragrances ADD COLUMN collection TEXT;                 -- the dataset's line, for tier overrides
+ALTER TABLE fragrances ADD COLUMN price_tier SMALLINT CHECK (price_tier BETWEEN 1 AND 4);
+ALTER TABLE fragrances ADD COLUMN value_votes INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE fragrances ADD COLUMN value_score REAL CHECK (value_score BETWEEN 1 AND 5);
+ALTER TABLE notes ADD COLUMN image_url TEXT;                       -- Fragrantica's note icon, hotlinked (B19)
+```
+
 ---
 
 ## 6. Guest mode
@@ -461,13 +475,15 @@ All responses JSON. Validate every body and query with Zod. Errors return `{ err
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/health` | DB ping, for the deploy check |
-| GET | `/api/fragrances?q=&gender=&family=&sort=&page=` | Search and list, 24 per page. `gender` is `male`, `female`, or `unisex`. `q` is a prefix full-text search over name, brand, and their aliases, accent-insensitive (`ysl myself` finds YSL MYSLF, `tresor` finds Trésor). If `q` matches nothing at all (not merely nothing after the gender and family filters), a typo-tolerant fallback returns near-misses: a bottle matches when every typed word is within `search.fuzzy_min_similarity` (pg_trgm) of one of its words, ordered by closeness, and the response says `fuzzy: true`. `sort` is `popular` (default: rating votes, high to low), `least-popular` (rating votes, low to high), or `highest-rated` (weighted rating, below); an unknown value is a 400. The sort orders exact results; fuzzy results are ordered by closeness |
+| GET | `/api/fragrances?q=&gender=&family=&brand=&sort=&page=` | Search and list, 24 per page. `brand` makes it a brand page: the brand as the dataset spells it (case and accents ignored) or a `brand_aliases.csv` alias, so `YSL` and `Yves Saint Laurent` give one page; the response's `brand` is the catalogue's spelling, and an unknown brand is a 404 `unknown_brand` (DECISIONS B42). `gender` is `male`, `female`, or `unisex`. `q` is a prefix full-text search over name, brand, and their aliases, accent-insensitive (`ysl myself` finds YSL MYSLF, `tresor` finds Trésor). If `q` matches nothing at all (not merely nothing after the gender and family filters), a typo-tolerant fallback returns near-misses: a bottle matches when every typed word is within `search.fuzzy_min_similarity` (pg_trgm) of one of its words, ordered by closeness, and the response says `fuzzy: true`. `sort` is `popular` (default: rating votes, high to low), `least-popular` (rating votes, low to high), or `highest-rated` (weighted rating, below); an unknown value is a 400. The sort orders exact results; fuzzy results are ordered by closeness |
 | GET | `/api/fragrances/:slug` | Full detail: notes by layer, accords, family profile, strength, tags, rating |
 | GET | `/api/notes?q=` | Autocomplete. Mapped notes only (`mapped = true`) |
 | POST | `/api/pairing/notes` | Body `{ notes: string[], goal }`. Mapped notes only; rejects an unmapped input note. Returns ranked notes with score 0-100 and the dominant family of each |
 | GET | `/api/pairing/fragrances/:slug?goal=&page=&owned=&ownedOnly=` | Ranked partners from `pair_scores`. `owned` = comma list of IDs to flag. `ownedOnly=true` returns only those partners, searched across the whole list, with their full-list ranks; `total` stays the whole list size and `matching` counts what the filter returns |
 | GET | `/api/pairing/fragrances/:slug/rank/:partnerSlug?goal=` | Returns `{ status: "ranked", rank, total, score }` for the "#38 of 999" search. `total` is the real size of that base's list for the goal, so Soften shows e.g. "#12 of 214". If the partner is not in the list (Soften only: it is as harsh or harsher than the base), return `{ status: "too_harsh", total }` and the UI says "too harsh to soften this base". Never a missing rank or a 404 for a valid slug |
 | GET | `/api/families` | The 14 families for the About page and profile card |
+
+**Price guidance (DECISIONS B42).** Every fragrance the API returns (lists, detail, pairing partners, chat and concierge picks) carries `price` (`{ tier, minCad, maxCad }`, the approximate tier and its band, never a price) and `value` (`{ score, votes }`, the mean of the dataset's 1 (overpriced) to 5 (great value) votes), each `null` when the catalogue has none; `value` is also `null` under `price.min_value_votes` (100). The detail's notes carry `imageUrl` and their dominant `family`.
 
 **Weighted rating (the "Highest rated" sort).** `(votes × rating + m × mean) / (votes + m)`. `mean` is the average community rating of the whole catalogue (not of the filtered list, so a bottle's score does not change with the filters) and `m` is `browse.rating_weight_votes` in `scoring.yaml` (10,000, about the catalogue's median vote count). A bottle needs roughly `m` votes before its own rating counts as much as the average, so a bottle with few votes and a perfect score cannot top the list. Ties break by votes, then id. A bottle with no rating sorts last.
 
@@ -524,6 +540,8 @@ Flow per user message:
 5. When `ready_to_recommend` is true, `recommend.ts` scores every fragrance: cosine similarity between the taste vector (14 families + 6 facets) and the fragrance vector (profile + facets). Return up to 3 owned matches first, then up to 3 non-owned matches that score higher than the best owned match. An owned bottle counts only if it matches at least `CHAT_OWNED_MIN_MATCH` (0.6); bottles the visitor named anywhere in that chat are never picked (DECISIONS B35, B36).
 6. The UI shows the reply, the recommendation cards, and the updated taste profile card.
 
+Budgets (DECISIONS B42): the model's JSON also has `budget` (`kind` `none`, `max` with `max_cad`, `affordable`, `luxury`, or `any`, plus `evidence`). The server keeps it only when the evidence is the visitor's own words in that message, stores it with the chat (`chat_conversations.slots`), and adds one sentence in tier symbols when it changes. "under $100" favours `$` and the cheaper end of `$$`; "cheap" or "affordable" favours `$` and `$$`; "luxury" or "niche" favours `$$$$`. It reorders only bottles the visitor doesn't own, keeping `1 - price.budget_pull` (0.3) of a score outside the budget, so a much better match still appears. The model never states a price: the reply guard replaces any text with an amount of money or a tier symbol.
+
 Untrusted input (M9; DECISIONS B34): before a reply or summary is shown, the server caps it at 120 words and replaces it with a reply built from the profile numbers if it names any catalogue fragrance, brand, or brand alias, contains a link, or mentions no family, facet, note, or scent word. A guest's profile reaches the model as numbers only. If the Anthropic call fails, the message is refunded and the chat says the assistant is unavailable; two invalid answers in a row return a friendly apology and count the message.
 
 Several chats (DECISIONS B36): a visitor can start a new chat at any time without deleting earlier ones, and reopen and continue any of them. Each chat has its own history for the model (the last 8 messages) and its own list of excluded named bottles. The taste profile is shared by every chat, and so is the day's message budget (section 10). A chat's title is the visitor's first message, whitespace collapsed and cut at a word break to at most 60 characters; it never comes from the model's text. Chats are deleted 30 days after their last message (`CHAT_RETENTION_DAYS`), and the visitor (guest or user) can delete one at any time; deleting gives no messages back.
@@ -557,6 +575,7 @@ As built (M10; DECISIONS B37):
 - **Candidates** are the Own list (the browser's for guests, `collection` for users); an empty list uses the whole catalogue, and the reply says so in one line. Fewer than 3 owned bottles give fewer picks.
 - **Scoring details (B38):** season and day/night shares are rescaled to 0..1 across the catalogue (min-max, per season and per day/night) before the weights apply. Outdoors moves the projection band up one step, capped at 4; indoor changes nothing.
 - **Every number** (score weights, share scaling, projection bands and the outdoor step, occasion family weights, fact thresholds, Toronto season months, the forced-result defaults) is in `occasions.yaml`; the API checks the file at startup.
+- **Beyond the Own list (DECISIONS B42):** two optional slots the server never asks about. `source: catalogue` (the visitor asked for "something I don't have", or tapped "Show picks I don't own" under Own-list picks) picks from the catalogue minus the Own list. `budget` (`$` to `$$$$`, meaning up to that tier, or `any`) comes from the visitor's words or from the budget chips under catalogue picks, and pulls catalogue picks like the chat's budget. Both chips are free. The outing card shows the budget ("Any" until set).
 - **Caps:** 8 typed messages a day of its own (`CONCIERGE_MAX_USER_MESSAGES`), claimed atomically like the chat's. Chip answers are free and keep working after the 8. The guest cap counts distinct guests across both features.
 - **The day's last typed message forces a result (B38):** missing slots are assumed (the current Toronto season; night from 5 p.m. Toronto time, otherwise day; medium projection; indoor), and one line on the result lists them. A missing occasion is not assumed: occasion fit is left out of the score.
 - The disclaimer under the input: "Up to 8 typed messages a day, shared across all your outings; tapping an answer is free. Picks come from your Own list, or from our catalogue when it's empty."
@@ -580,8 +599,8 @@ Pages:
 |---|---|
 | `/` | Home (DECISIONS B41): a one-line welcome, then a card for each feature above the fold at 375, 768, and 1366px: Layer (the largest, gold), Chat, Concierge, Browse, and Collection, each with a title, one line, and a button; plus a "How the scoring works" link to `/about`. A URL carrying a pairing param (`f`, `mode`, `goal`, `notes`) from before the move is sent to `/pair` with the same query string |
 | `/pair` | Pairing. Tabs: Notes or Fragrance. Goal toggle: Enhance or Soften. Results list with score bars, "Owned" badges, an "Owned only" filter, and a search box that jumps to any fragrance's rank. The page opens with nothing selected: an empty search box and a short prompt in the results area. A shared `?f=<slug>` link still preloads that fragrance. Nav label: "Layer" |
-| `/browse` | Catalogue grid with search, gender and family filters, and a sort control (Most popular, the default; Least popular; Highest rated). Search, filters, sort, and page live in the URL; the default sort stays out of it |
-| `/f/:slug` | Fragrance page: pyramid, accords as bars, family profile as a small wheel chart, strength, tags, rating, Want/Own buttons, reviews (pass 2), "Pair this" button |
+| `/browse` | Catalogue grid with search, gender and family filters, and a sort control (Most popular, the default; Least popular; Highest rated). Search, filters, sort, and page live in the URL; the default sort stays out of it. `?brand=` makes it that brand's page, headed with the brand's name; every brand name on the site links there (DECISIONS B42). Photos show in true colour on white with a thin accent-gold frame |
+| `/f/:slug` | Fragrance page: the note pyramid (top, heart, and base tiers, each with when you smell it, notes as family-tinted chips with their pictures; one row for a flat list), the approximate price tier with its band in a tooltip, the value-for-money votes, a "Check current prices" shopping search in a new tab, accords as bars, family profile as a small wheel chart, strength, tags, rating, Want/Own buttons, reviews (pass 2), "Pair this" button |
 | `/chat` | Chatbot: a chat panel, a chat list, and the taste profile card (layout below). The open chat is in the URL (`?c=<id>`); no id is a new chat |
 | `/concierge` | Concierge: the chat's panel layout (fixed height, own scroll, pinned input, an outings list with "New outing"), answer chips under the latest question, pick cards with one sentence each, and an outing card with the five slots beside the panel. The open outing is in the URL (`?o=<id>`) |
 | `/me` | Collection tabs (Own, Want) and the editable taste profile card |
@@ -693,6 +712,7 @@ Stop after each one. Report: what you built, files to read first, commands to ru
 | M10 | Concierge | Asks for missing slots; empty-collection fallback works |
 | M11 | Polish | Playwright smoke tests (pair a fragrance, sign up and save a bottle, chat once, concierge once) with a mocked Anthropic, run in CI against a test catalogue; the API integration tests run in CI too; README for a recruiter; Lighthouse accessibility ≥ 90 on pairing, browse, fragrance, chat, and concierge; migration 009 (DECISIONS B39) |
 | M12 | Quality of life changes (launch polish) | Home page at `/` with feature cards above the fold at 375, 768, and 1366px; pairing at `/pair` with old links redirected; brighter `soft` text; accent words bold, not italic; the About ring with typeset formula, worked example, labelled clickable nodes, legend, and a phone list; Open Graph and Twitter tags, a 1200x630 preview image, and a favicon; Lighthouse accessibility 100 on every page (DECISIONS B41) |
+| M13 | Feedback round 1 | Price guidance (approximate tiers from reviewed brand and line files, value-for-money votes, a prices link, budgets in the chat and the concierge, no prices from the model); a three-tier note pyramid with note pictures; concierge picks beyond the Own list; placeholder bottles on one baseline; Browse photos in true colour with a gold frame; brand pages reached by name or alias; changed schemas warmed (B40); Lighthouse accessibility 100 on every page (DECISIONS B42) |
 
 **Done in M11:** migration `009_drop_llm_usage_conversation_id.sql` drops `llm_usage.conversation_id`. Migration 007 only made it nullable, so the old API container could keep writing it during the 007 deploy; nothing has read or written it since (DECISIONS B36, B39). The column is gone from section 5's `001_init.sql` listing.
 

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { BottleImage } from "../../components/BottleImage";
 import { Combobox, SuggestionRow } from "../../components/Combobox";
+import { BrandLink } from "../../components/Price";
 import { Segmented, TextTabs } from "../../components/ui";
 import type { FragranceDetail, Goal } from "../../lib/api";
 import { useFragranceSuggestions, useNoteSuggestions } from "../../lib/queries";
@@ -134,7 +135,16 @@ function SelectedBase({ base }: { base: Props["base"] }) {
         <div className="skeleton h-14 w-12 sm:h-[62px] sm:w-[54px]" />
       )}
       <div className="min-w-0">
-        <p className="kicker truncate">{f ? [f.brand, f.releaseYear].filter(Boolean).join(" · ") : " "}</p>
+        <p className="kicker truncate">
+          {f ? (
+            <>
+              <BrandLink brand={f.brand} />
+              {f.releaseYear ? ` · ${f.releaseYear}` : ""}
+            </>
+          ) : (
+            " "
+          )}
+        </p>
         <strong className="mt-1 mb-0.5 block truncate font-display text-[17px] font-medium sm:text-xl">
           {f?.name ?? " "}
         </strong>

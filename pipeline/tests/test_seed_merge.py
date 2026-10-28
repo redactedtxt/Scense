@@ -84,11 +84,19 @@ def _new_catalogue_in_seed(conn) -> None:
     scores, a different note list, and a changed alias."""
     _run(conn, "stage.sql")
     conn.execute("UPDATE seed.fragrances SET name = 'F1 Renamed', rating_votes = 999 WHERE id = 1")
+    # The price columns (migration 010) travel with the rest (DECISIONS B42).
+    conn.execute(
+        """UPDATE seed.fragrances SET collection = 'Line', price_tier = 4, value_votes = 512,
+             value_score = 3.25 WHERE id = 1"""
+    )
+    conn.execute("UPDATE seed.notes SET image_url = 'https://example.test/v.jpg' WHERE id = 1")
+    # A table made with CREATE TABLE AS has no column defaults, so the new bottle names
+    # value_votes itself, as every real seed row (a copy of a loaded row) does.
     conn.execute(
         """INSERT INTO seed.fragrances (id, slug, name, brand, profile, facets, harshness, strength,
-             seasons, daynight)
+             seasons, daynight, value_votes)
            SELECT 4, 'brand-f4', 'F4', brand, profile, facets, harshness, strength,
-                  seasons, daynight
+                  seasons, daynight, value_votes
              FROM seed.fragrances WHERE id = 3"""
     )
     conn.execute("DELETE FROM seed.pair_scores")
@@ -123,6 +131,12 @@ def test_reseed_keeps_every_user_row_and_updates_the_catalogue(db):
     assert _snapshot(db) == before
     renamed = db.execute("SELECT name, rating_votes FROM fragrances WHERE id = 1").fetchone()
     assert renamed == ("F1 Renamed", 999)
+    price = db.execute(
+        "SELECT collection, price_tier, value_votes, value_score FROM fragrances WHERE id = 1"
+    ).fetchone()
+    assert price == ("Line", 4, 512, 3.25)
+    note = db.execute("SELECT image_url FROM notes WHERE id = 1").fetchone()
+    assert note == ("https://example.test/v.jpg",)
     assert [r[0] for r in db.execute("SELECT id FROM fragrances ORDER BY id")] == [1, 2, 3, 4]
     assert db.execute("SELECT count(*) FROM pair_scores").fetchone()[0] == 2
     assert [r[0] for r in db.execute("SELECT name FROM notes ORDER BY id")] == ["Vanilla", "Rose"]

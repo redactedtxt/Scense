@@ -240,6 +240,7 @@ function storeReply(client: QueryClient, userId: number | null, message: string,
   client.setQueryData<ChatConversation>(chatConversationKey(userId, reply.conversation.id), (old) => ({
     conversation: reply.conversation,
     messages: [...(old?.messages ?? []), ...added],
+    budget: reply.budget,
   }));
   client.setQueryData<ChatState>(chatKey(userId), (old) => {
     const others = (old?.conversations ?? []).filter((c) => c.id !== reply.conversation.id);

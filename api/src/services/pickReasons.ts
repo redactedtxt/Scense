@@ -65,7 +65,7 @@ export function pickFacts(score: OutingScore, index: number, slots: FullSlots, s
 // --- the check -----------------------------------------------------------------------
 
 export type ReasonCheck =
-  | "ok" | "empty" | "too_long" | "not_one_sentence" | "names_product" | "link" | "mentions_rules"
+  | "ok" | "empty" | "too_long" | "not_one_sentence" | "names_product" | "link" | "mentions_rules" | "states_price"
   | "wrong_number" | "wrong_family" | "wrong_facet" | "wrong_season" | "wrong_time" | "wrong_setting"
   | "wrong_occasion" | "names_note" | "unsupported_claim";
 

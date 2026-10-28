@@ -37,6 +37,7 @@ function chatRoutes(state: {
   profileRow?: unknown;
   namedEarlier?: number[];
   ownsChat?: boolean; // whether CONVERSATION belongs to the visitor
+  chatSlots?: unknown; // CONVERSATION's stored slots: its budget, if any (DECISIONS B42)
 }) {
   return [
     // The catalogue search for named bottles: only "Myrrh & Tonka" is found (the
@@ -48,7 +49,8 @@ function chatRoutes(state: {
     [/SELECT user_messages FROM llm_usage/, () => (state.usageRow ? [{ user_messages: 8 }] : [])],
     // storeExchange: creates or touches the chat row and returns it.
     [/WITH conversation AS/, (params: unknown[]) => [chatRow(params[0] as string, params[6] as string)]],
-    [/FROM chat_conversations WHERE id = \$1 AND subject = \$2/, () => (state.ownsChat ? [chatRow(CONVERSATION)] : [])],
+    [/FROM chat_conversations WHERE id = \$1 AND subject = \$2/, () =>
+      state.ownsChat ? [{ ...chatRow(CONVERSATION), slots: state.chatSlots ?? null }] : []],
     [/FROM chat_conversations\s+WHERE subject = \$1/, [chatRow(CONVERSATION)]],
     [/DELETE FROM chat_conversations/, []],
     [/UPDATE llm_usage SET input_tokens/, []],
@@ -464,5 +466,40 @@ describe("POST /api/chat: fixes from the first real test (DECISIONS B35)", () =>
     const res = await send(app, { message: "warm woods" });
     expect(res.body.reply).toBe("Warm Woody Amber fits that. Do you like spice?");
     expect(res.body.profile.summary).toBe("You lean toward Woody Amber and spicy scents.");
+  });
+});
+
+describe("POST /api/chat: budgets and prices (DECISIONS B42)", () => {
+  const under100 = { kind: "max", max_cad: 100, evidence: "under $100" };
+  const stored = (calls: { sql: string; params: unknown[] }[]) => calls.find((c) => /WITH conversation AS/.test(c.sql))!.params[8];
+
+  it("keeps a budget the visitor stated with the chat, says so in tier symbols, and returns it", async () => {
+    const { llm } = fakeLlm([modelJson({ budget: under100, ready_to_recommend: true })]);
+    const { app, calls } = appWith(chatRoutes({ reserve: firstSlot }), undefined, aiWith(llm));
+    const res = await send(app, { message: "Warm and spicy, under $100 please" });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(stored(calls) as string)).toEqual({ budget: { kind: "max", maxCad: 100 } });
+    expect(res.body.budget).toBe("$ and the cheaper end of $$");
+    expect(res.body.reply).toContain("Noted your budget: picks now lean toward $ and the cheaper end of $$ bottles (approximate tiers).");
+  });
+
+  it("ignores a budget the model invents, and keeps the chat's earlier one", async () => {
+    const { llm } = fakeLlm([modelJson({ budget: { kind: "luxury", max_cad: null, evidence: "luxury" } })]);
+    const { app, calls } = appWith(
+      chatRoutes({ reserve: firstSlot, ownsChat: true, chatSlots: { budget: { kind: "affordable" } } }),
+      undefined,
+      aiWith(llm),
+    );
+    const res = await send(app, { message: "More smoke, less sugar", conversationId: CONVERSATION });
+    expect(JSON.parse(stored(calls) as string)).toEqual({ budget: { kind: "affordable" } });
+    expect(res.body.budget).toBe("$ and $$");
+    expect(res.body.reply).not.toContain("Noted your budget");
+  });
+
+  it("never shows a price the model wrote", async () => {
+    const { llm } = fakeLlm([modelJson({ reply: "Warm Woody Amber notes, usually around $120 a bottle." })]);
+    const { app } = appWith(chatRoutes({ reserve: firstSlot }), undefined, aiWith(llm));
+    const res = await send(app, { message: "warm woods" });
+    expect(res.body.reply).not.toMatch(/\$\d/);
   });
 });

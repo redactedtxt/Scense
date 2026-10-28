@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { FACET_NAMES, FAMILY_NAMES, weightsFor, type TasteProfile } from "./taste.js";
 
+// "none": the message says nothing about spending; "any": the visitor dropped a budget.
+export const BUDGET_KINDS = ["none", "max", "affordable", "luxury", "any"] as const;
+
 // What the chat model is told, and the shape it must answer in (SPEC section 8).
 // The model only translates words into weights. It never sees the catalogue, so it has
 // no fragrance to name, and the server picks every recommendation (decision 23).
@@ -61,6 +64,8 @@ function rules(maxWords: number): string {
 - profile_update: weights from -1 (strongly dislikes) to 1 (loves), only for families and facets this message tells you about. Leave everything else out.
 - summary: one sentence describing the whole profile so far, starting "You".
 - mentioned_fragrances: every fragrance or perfume name the user typed in this message, as {"name": copied exactly, "liked": true or false}, or [] if none. Never add a name the user didn't type.
+- budget: what this message says about spending, or kind "none". "under $100", "less than 80 dollars" are kind "max" with max_cad as the number; "cheap", "affordable", "budget", "inexpensive" are "affordable"; "luxury", "niche", "high-end", "splurge" are "luxury"; "price doesn't matter", "any budget" are "any". Copy the visitor's exact words into evidence ("under $100"). max_cad is null unless kind is "max"; evidence is "" for "none". Only this message counts.
+- Never state a price, an amount of money, or a price tier ($, $$) in the reply or the summary, even if the user does. The website shows approximate tiers itself.
 - ready_to_recommend: true once you know at least two clear likes, or the user asks for suggestions. When it is true, the website shows its picks right under your reply, so end with one short sentence that introduces them, such as "Here are a few picks that fit." Never ask whether they want recommendations.`;
 }
 
@@ -122,8 +127,19 @@ export const OUTPUT_SCHEMA: Record<string, unknown> = {
       },
     },
     ready_to_recommend: { type: "boolean" },
+    // A budget the visitor stated, with their own words as evidence (DECISIONS B42).
+    budget: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        kind: { type: "string", enum: [...BUDGET_KINDS] },
+        max_cad: { anyOf: [{ type: "number" }, { type: "null" }] },
+        evidence: { type: "string" },
+      },
+      required: ["kind", "max_cad", "evidence"],
+    },
   },
-  required: ["reply", "profile_update", "summary", "mentioned_fragrances", "ready_to_recommend"],
+  required: ["reply", "profile_update", "summary", "mentioned_fragrances", "ready_to_recommend", "budget"],
 };
 
 // The server's own check of the same shape (SPEC section 8 step 3). Structured outputs
@@ -140,6 +156,11 @@ export const modelOutput = z.strictObject({
   // keeps only names that appear in the message, and at most CHAT_NAMED_MAX of those.
   mentioned_fragrances: z.array(z.strictObject({ name: z.string().max(120), liked: z.boolean() })).max(20),
   ready_to_recommend: z.boolean(),
+  budget: z.strictObject({
+    kind: z.enum(BUDGET_KINDS),
+    max_cad: z.number().finite().nullable(),
+    evidence: z.string().max(200),
+  }),
 });
 
 export type ModelOutput = z.infer<typeof modelOutput>;

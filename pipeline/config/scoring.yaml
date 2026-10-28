@@ -1,6 +1,6 @@
 # Every tunable number in the pairing model lives here. Change a value, then run
 # the tune command (`make tune`) to rebuild profiles, scores and the database.
-# The last two sections (search, browse) are read by the API only; editing them needs
+# The last three sections (search, browse, price) are read by the API only; editing them needs
 # no pipeline run, just an API restart.
 
 # Affinity by ring distance d = 0..7 (SPEC 3.5). Enhance rewards close families,
@@ -52,3 +52,17 @@ search:
 # bottle (median ~5,900), so 6,000 keeps the intent of B24: about the median.
 browse:
   rating_weight_votes: 6000
+
+# Price guidance (DECISIONS B42), read by the API only. The dataset has no prices: the tier
+# of each bottle comes from brand_tiers.csv and tier_overrides.csv, and these numbers only
+# say what the tiers mean. Tiers are bands of typical retail price for a 100 ml bottle in
+# CAD; the edges [e1, e2, e3] give $ under e1, $$ e1 to e2, $$$ e2 to e3, $$$$ over e3.
+# The value-for-money indicator hides when a bottle has fewer votes than min_value_votes
+# (every catalogue bottle has 198 or more today, so it is a guard for a bigger catalogue).
+# budget_pull (0 to 1) is how hard a budget the visitor states (chat: "under $100",
+# "affordable", "luxury"; concierge: a $ to $$$$ chip) pulls the picks: a bottle outside
+# the budget keeps (1 - budget_pull) of its score, so a far better match can still win.
+price:
+  tier_edges_cad: [75, 150, 300]
+  min_value_votes: 100
+  budget_pull: 0.3

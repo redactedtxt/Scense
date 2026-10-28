@@ -11,9 +11,13 @@ import { addTokens, refundMessage, reserveMessage, todaysUsage, torontoDay } fro
 import type { CatalogueCache, CatalogueSnapshot } from "../services/catalogueCache.js";
 import { askJson, type Tokens } from "../services/chat.js";
 import {
+  afterPicksChips,
   applyExtraction,
   assumedLine,
   assumeMissing,
+  BUDGET_LINE,
+  budgetOf,
+  chipAfterPicks,
   chipAnswer,
   chipsFor,
   labelOf,
@@ -22,7 +26,7 @@ import {
   QUESTIONS,
   SLOT_NAMES,
   slotsFrom,
-  type SlotName,
+  type AnySlot,
   type Slots,
 } from "../services/concierge.js";
 import {
@@ -45,6 +49,7 @@ import {
 import type { Llm, LlmMessage } from "../services/llm.js";
 import type { ConciergeSettings } from "../services/occasions.js";
 import { checkReason, fallbackReason, pickFacts, type PickFacts } from "../services/pickReasons.js";
+import type { PriceSettings } from "../services/price.js";
 import { loadProfile, ownedIds } from "../services/profileStore.js";
 import { cardsFor, conciergePicks, type FullSlots } from "../services/recommend.js";
 import { createReplyGuard, mentionsRules, type ReplyGuard } from "../services/replyGuard.js";
@@ -65,6 +70,8 @@ export type ConciergeDeps = {
   llm: Llm | null; // null when no API key is configured
   catalogue: CatalogueCache;
   concierge: ConciergeSettings;
+  // scoring.yaml's price section: how a budget pulls catalogue picks (DECISIONS B42).
+  price: PriceSettings;
   now: () => number;
 };
 
@@ -82,6 +89,7 @@ const UNAVAILABLE = new ApiError(
 );
 
 export const CATALOGUE_LINE = "Your Own list is empty, so these come from the whole catalogue.";
+export const NEW_PICKS_LINE = "These come from the catalogue, leaving out the bottles you own.";
 
 export const CONFUSED_TEXT = "Sorry, I didn't catch that.";
 
@@ -116,7 +124,8 @@ export function conciergeRouter(deps: ConciergeDeps): Router {
     const subject = requireSubject(req, res);
     const { summary, slots } = await ownOuting(deps.db, subject, req.params.id);
     const messages = await transcriptForPage(deps, summary.id, res.locals.userId as number | null);
-    res.json({ conversation: summary, outing: outingView(slotsFrom(slots), deps.concierge), messages });
+    const stored = slotsFrom(slots);
+    res.json({ conversation: summary, outing: outingView(stored, deps.concierge), beyondOwn: stored.source === "catalogue", messages });
   });
 
   // No refund: the budget is counted in llm_usage, which holds no text and isn't touched.
@@ -168,7 +177,8 @@ async function handleMessage(deps: ConciergeDeps, llm: Llm, subject: string, use
   const existing = body.conversationId ? await ownOuting(db, subject, body.conversationId) : null;
   const id = existing?.summary.id ?? randomUUID();
   const old = slotsFrom(existing?.slots);
-  const chip = existing ? chipFor(old, body.message, deps.concierge) : null;
+  const owned = await ownedSet(db, userId, body);
+  const chip = existing ? chipFor(old, body.message, deps.concierge, owned.size > 0) : null;
   // A chip answer is free (DECISIONS B38): only typed messages count against the 8.
   const used = chip ? ((await todaysUsage(db, key))?.userMessages ?? 0) : await claimMessage(db, key, ai);
   if (existing === null) await purgeExpiredConversations(db, ai.retentionDays);
@@ -183,7 +193,7 @@ async function handleMessage(deps: ConciergeDeps, llm: Llm, subject: string, use
   }
 
   const snapshot = await deps.catalogue.get();
-  const ctx = { key, snapshot, guard: createReplyGuard(snapshot), userId, body };
+  const ctx = { key, snapshot, guard: createReplyGuard(snapshot), userId, body, owned };
   // The day's last typed message always ends with picks (B38).
   const reply = await chooseReply(deps, llm, filled, ctx, chip === null && used >= ai.conciergeMaxUserMessages);
 
@@ -199,6 +209,9 @@ async function handleMessage(deps: ConciergeDeps, llm: Llm, subject: string, use
     options: reply.options,
     picks: reply.picks,
     outing: outingView(filled.slots, deps.concierge),
+    // The visitor asked for bottles they don't own (DECISIONS B42), so the outing card says
+    // the picks come from the catalogue.
+    beyondOwn: filled.slots.source === "catalogue",
     degraded: filled.kind === "invalid",
     messagesUsed: used,
     messagesLimit: ai.conciergeMaxUserMessages,
@@ -229,14 +242,21 @@ type Filled = { kind: "ok" | "invalid" | "unavailable"; slots: Slots; question: 
 
 const NO_TOKENS: Tokens = { input: 0, output: 0 };
 
-type ChipAnswer = { slot: SlotName; value: string };
+type ChipAnswer = { slot: AnySlot; value: string };
 
-// A message that is exactly one of the open question's chips ("Night"), tapped or typed.
-// Only in an existing outing: a new one has shown no chips yet.
-function chipFor(old: Slots, message: string, settings: ConciergeSettings): ChipAnswer | null {
+// A message that is exactly one of the open question's chips ("Night"), or one of the
+// chips under the picks (a budget, or "Show picks I don't own"), tapped or typed. Only in
+// an existing outing: a new one has shown no chips yet.
+function chipFor(old: Slots, message: string, settings: ConciergeSettings, ownsAny: boolean): ChipAnswer | null {
   const asked = missingSlots(old)[0];
-  const value = asked ? chipAnswer(asked, message, settings) : null;
-  return asked && value ? { slot: asked, value } : null;
+  if (asked === undefined) return chipAfterPicks(old, message, ownsAny);
+  const value = chipAnswer(asked, message, settings);
+  return value ? { slot: asked, value } : null;
+}
+
+// The visitor's Own list: the account's for a user, the browser's for a guest.
+async function ownedSet(db: Db, userId: number | null, body: PostBody): Promise<Set<number>> {
+  return new Set(userId !== null ? await ownedIds(db, userId) : (body.owned ?? []));
 }
 
 // A chip fills its slot directly, with no model call and no tokens.
@@ -303,7 +323,7 @@ function confusedReply(slots: Slots, deps: ConciergeDeps): Reply {
   return { content: `${CONFUSED_TEXT} ${QUESTIONS[slot]}`, options: chipLabels(slot, deps), picks: [], reasons: [] };
 }
 
-function chipLabels(slot: SlotName, deps: ConciergeDeps): string[] {
+function chipLabels(slot: (typeof SLOT_NAMES)[number], deps: ConciergeDeps): string[] {
   return chipsFor(slot, deps.concierge, deps.now()).map((chip) => chip.label);
 }
 
@@ -313,15 +333,17 @@ type PickContext = {
   guard: ReplyGuard;
   userId: number | null;
   body: PostBody;
+  owned: Set<number>;
 };
 
 // Score the candidates, then ask the model for one sentence per pick. `assumed` lists the
 // slots filled in by default on a forced result, for one line on the reply.
 async function pickReply(deps: ConciergeDeps, llm: Llm, ctx: PickContext, slots: FullSlots, assumed: string[]): Promise<Reply> {
   const { db, concierge } = deps;
-  const owned = new Set(ctx.userId !== null ? await ownedIds(db, ctx.userId) : (ctx.body.owned ?? []));
+  const owned = ctx.owned;
   const profile = await tasteFor(db, ctx.userId, ctx.body);
-  const { picks, fromCatalogue } = conciergePicks(ctx.snapshot.entries, owned, slots, profile, concierge);
+  const pricing = { budget: budgetOf(slots), price: deps.price };
+  const { picks, fromCatalogue, skippedOwned } = conciergePicks(ctx.snapshot.entries, owned, slots, profile, concierge, pricing);
   const facts = picks.map((pick, index) => pickFacts(pick, index, slots, concierge));
   const written = await writeReasons(deps, llm, facts, ctx);
   await addTokens(db, ctx.key, written.tokens);
@@ -330,11 +352,12 @@ async function pickReply(deps: ConciergeDeps, llm: Llm, ctx: PickContext, slots:
   const lines = [
     `${outingLine(slots, concierge)} ${leadIn(picks.length)}`,
     assumedLine(assumed),
-    fromCatalogue ? CATALOGUE_LINE : null,
+    skippedOwned ? NEW_PICKS_LINE : fromCatalogue ? CATALOGUE_LINE : null,
+    fromCatalogue ? BUDGET_LINE : null,
   ];
   return {
     content: lines.filter(Boolean).join("\n"),
-    options: [],
+    options: afterPicksChips(fromCatalogue, owned.size > 0),
     picks: cards.map((card, i) => ({ ...card, reason: written.reasons[i]! })),
     reasons: written.reasons,
   };
@@ -374,12 +397,15 @@ async function writeReasons(deps: ConciergeDeps, llm: Llm, facts: PickFacts[], c
   return { reasons, tokens: result.tokens };
 }
 
-// The five slots as the page shows them: each slot's label, or null while missing.
+// The five slots and the budget as the page shows them: each slot's label, or null while
+// missing. The budget reads "Up to $$" (DECISIONS B42).
 function outingView(slots: Slots, settings: ConciergeSettings) {
-  return SLOT_NAMES.map((name) => {
+  const view = SLOT_NAMES.map((name) => {
     const value = slots[name];
-    return { slot: name, value: value === null ? null : labelOf(name, value, settings) };
+    return { slot: name as string, value: value === null ? null : labelOf(name, value, settings) };
   });
+  const budget = slots.budget === null ? null : slots.budget === "any" ? "Any" : `Up to ${slots.budget}`;
+  return [...view, { slot: "budget", value: budget }];
 }
 
 // One outing's messages for the page, with each reply's pick cards rebuilt from the
