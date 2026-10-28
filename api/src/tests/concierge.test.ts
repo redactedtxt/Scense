@@ -1,8 +1,8 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
-import { CATALOGUE_LINE, CONFUSED_TEXT } from "../routes/concierge.js";
+import { CATALOGUE_LINE, CONFUSED_TEXT, NEW_PICKS_LINE } from "../routes/concierge.js";
 import { signSession } from "../services/auth.js";
-import { QUESTIONS } from "../services/concierge.js";
+import { BUDGET_CHIPS, BUDGET_LINE, NEW_PICKS_CHIP, QUESTIONS } from "../services/concierge.js";
 import { LlmUnavailableError, type LlmResponse } from "../services/llm.js";
 import { aiWith, appWith, auth, fakeLlm, profileAt } from "./helpers.js";
 
@@ -70,7 +70,7 @@ function extraction(
   question = "",
   questionSlot: string | null = null,
 ): Partial<LlmResponse> {
-  const all = ["occasion", "time_of_day", "season", "setting", "projection"];
+  const all = ["occasion", "time_of_day", "season", "setting", "projection", "budget", "source"];
   const filled = Object.fromEntries(all.map((name) => [name, slots[name] ? { value: slots[name]![0], evidence: slots[name]![1] } : none]));
   return { text: JSON.stringify({ slots: filled, next_question: question, question_slot: questionSlot }) };
 }
@@ -108,12 +108,13 @@ describe("POST /api/concierge: filling the slots", () => {
       { slot: "season", value: null },
       { slot: "setting", value: "Indoor" },
       { slot: "projection", value: null },
+      { slot: "budget", value: null },
     ]);
     expect(res.body).toMatchObject({ picks: [], degraded: false, messagesUsed: 1, messagesLimit: 8 });
     // The slots are stored with the outing, under the concierge feature.
     const stored = calls.find((c) => /WITH conversation AS/.test(c.sql))!;
     expect(stored.params[7]).toBe("concierge");
-    expect(JSON.parse(stored.params[8] as string)).toEqual({ ...ALMOST, season: null });
+    expect(JSON.parse(stored.params[8] as string)).toEqual({ ...ALMOST, season: null, budget: null, source: null });
     expect(stored.params[9]).toEqual(["Fall", "Winter", "Spring", "Summer"]);
     // The model is told about the slots, never about any bottle.
     expect(requests[0]!.system).not.toMatch(/Aventus|Creed|Black Opium/);
@@ -132,7 +133,7 @@ describe("POST /api/concierge: filling the slots", () => {
     const res = await send(app, { message: "Something for work tomorrow" });
     // "work" is the visitor's word, so office stays. "it's freezing out" and "office" are
     // not, so the season and the projection are dropped and asked about later.
-    expect(res.body.outing.map((s: { value: string | null }) => s.value)).toEqual(["Office", null, null, null, null]);
+    expect(res.body.outing.map((s: { value: string | null }) => s.value)).toEqual(["Office", null, null, null, null, null]);
     expect(res.body.options).toEqual(["Day", "Night"]);
   });
 
@@ -211,7 +212,8 @@ describe("POST /api/concierge: the picks", () => {
     expect(res.body.picks.map((p: { reason: string }) => p.reason)).toEqual(GOOD);
     expect(res.body.reply).toBe("Your outing: Date night, night, fall, indoor, medium projection. Here is your top pick and two alternatives.");
     expect(res.body.reply).not.toContain(CATALOGUE_LINE);
-    expect(res.body.options).toEqual([]);
+    // Own-list picks offer the catalogue next (DECISIONS B42).
+    expect(res.body.options).toEqual([NEW_PICKS_CHIP]);
     // The facts go to the model with no name, brand, or slug.
     const facts = requests[1]!.messages[0]!.content;
     expect(facts).toContain('"season_vote_share_percent":45');
@@ -226,7 +228,9 @@ describe("POST /api/concierge: the picks", () => {
     expect(res.body.reply.split("\n")).toEqual([
       "Your outing: Date night, night, fall, indoor, high projection. Here is your top pick and two alternatives.",
       CATALOGUE_LINE,
+      BUDGET_LINE,
     ]);
+    expect(res.body.options).toEqual(BUDGET_CHIPS);
   });
 
   it("uses a signed-in user's Own list from the account, not the request", async () => {
@@ -288,8 +292,8 @@ describe("POST /api/concierge: the day's last typed message (B38)", () => {
     ]);
     // The assumed values are not stored as if the visitor had said them.
     const stored = calls.find((c) => /WITH conversation AS/.test(c.sql))!;
-    expect(JSON.parse(stored.params[8] as string)).toEqual(outing);
-    expect(res.body.outing.map((s: { value: string | null }) => s.value)).toEqual(["Office", null, null, null, null]);
+    expect(JSON.parse(stored.params[8] as string)).toEqual({ ...outing, budget: null, source: null });
+    expect(res.body.outing.map((s: { value: string | null }) => s.value)).toEqual(["Office", null, null, null, null, null]);
   });
 
   it("forces a result without an occasion, leaving occasion fit out", async () => {
@@ -389,5 +393,55 @@ describe("the outing list", () => {
     for (const id of [OUTING, "nope"]) {
       expect((await request(app).get(`/api/concierge/${id}`).set("X-Guest-Id", GUEST)).status).toBe(404);
     }
+  });
+});
+
+describe("POST /api/concierge: beyond the Own list (DECISIONS B42)", () => {
+  const FULL = { ...ALMOST, projection: "medium" };
+  const lastStored = (calls: { sql: string; params: unknown[] }[]) =>
+    JSON.parse(calls.find((c) => /WITH conversation AS/.test(c.sql))!.params[8] as string);
+
+  it("reruns the picks on bottles the visitor doesn't own when they tap the chip, for free", async () => {
+    const { llm, requests } = fakeLlm([reasons("Warm Amber for a fall night indoors.", "Woody Amber for a fall night.")]);
+    const { app, calls } = appWith(conciergeRoutes({ outing: FULL }), OCT_22, aiWith(llm));
+    const res = await send(app, { message: NEW_PICKS_CHIP, conversationId: OUTING, owned: [1, 2] });
+    expect(res.status).toBe(200);
+    expect(requests).toHaveLength(1); // only the sentence call: no slot reading
+    expect(calls.some((c) => /INSERT INTO llm_usage \(subject, feature, day, user_messages\)/.test(c.sql))).toBe(false);
+    expect(res.body.picks.map((p: { id: number }) => p.id).sort()).toEqual([3, 4]);
+    expect(res.body.reply).toContain(NEW_PICKS_LINE);
+    expect(res.body.options).toEqual(BUDGET_CHIPS);
+    expect(lastStored(calls)).toMatchObject({ source: "catalogue" });
+    expect(res.body.beyondOwn).toBe(true);
+  });
+
+  it("goes straight to catalogue picks when the visitor asks for something they don't have", async () => {
+    const { llm } = fakeLlm([
+      extraction({ ...Object.fromEntries(Object.entries(FULL).map(([k, v]) => [k, [v, "date night"]])), source: ["catalogue", "something I don't have"] }),
+      reasons("Warm Amber for a fall night indoors.", "Woody Amber for a fall night."),
+    ]);
+    const { app } = appWith(conciergeRoutes({ outing: FULL }), OCT_22, aiWith(llm));
+    const res = await send(app, { message: "date night again, but something I don't have", conversationId: OUTING, owned: [1, 2] });
+    expect(res.body.picks.map((p: { id: number }) => p.id).sort()).toEqual([3, 4]);
+    expect(res.body.reply).toContain(NEW_PICKS_LINE);
+  });
+
+  it("takes a budget chip under catalogue picks for free and shows it on the outing card", async () => {
+    const { llm, requests } = fakeLlm([reasons("Warm Amber.", "Woody Amber.", "Fruity.")]);
+    const { app, calls } = appWith(conciergeRoutes({ outing: { ...FULL, source: "catalogue" } }), OCT_22, aiWith(llm));
+    const res = await send(app, { message: "$$", conversationId: OUTING, owned: [1] });
+    expect(res.status).toBe(200);
+    expect(requests).toHaveLength(1);
+    expect(lastStored(calls)).toMatchObject({ budget: "$$", source: "catalogue" });
+    expect(res.body.outing.at(-1)).toEqual({ slot: "budget", value: "Up to $$" });
+    expect(res.body.reply).toContain("up to $$ (approximate)");
+    expect(res.body.picks.map((p: { id: number }) => p.id)).not.toContain(1);
+  });
+
+  it("offers no catalogue chip to a visitor who owns nothing: their picks already come from it", async () => {
+    const { llm } = fakeLlm([extraction({ projection: ["high", "fill the room"] }), reasons("A.", "B.", "C.")]);
+    const { app } = appWith(conciergeRoutes({ outing: ALMOST }), OCT_22, aiWith(llm));
+    const res = await send(app, { message: "I want it to fill the room", conversationId: OUTING, owned: [] });
+    expect(res.body.options).toEqual(BUDGET_CHIPS);
   });
 });

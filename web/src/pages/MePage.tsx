@@ -4,6 +4,7 @@ import { BottleImage } from "../components/BottleImage";
 import { CollectionButtons } from "../components/CollectionButtons";
 import { ImportOffer } from "../components/ImportOffer";
 import { ArrowIcon } from "../components/Icons";
+import { BrandLink } from "../components/Price";
 import { TasteProfileCard } from "../components/TasteProfileCard";
 import { Notice, Tag, TextTabs } from "../components/ui";
 import { useCollectionView, useGuestImportable } from "../lib/collection";
@@ -119,8 +120,10 @@ function CollectionCard({ item }: { item: SavedFragrance }) {
       <Link to={href} tabIndex={-1} aria-hidden="true" className="block">
         <BottleImage src={item.imageUrl} family={item.dominantFamily} className="aspect-[3/4] w-full" lazy />
       </Link>
-      <p className="kicker mt-4 truncate">{item.brand}</p>
-      <h2 className="mt-1.5 mb-3 line-clamp-2 min-h-[2.1em] font-display text-[19px] leading-[1.05] font-medium sm:text-[22px]">
+      <p className="kicker mt-4 truncate">
+        <BrandLink brand={item.brand} />
+      </p>
+      <h2 className="mt-2 mb-3 line-clamp-2 min-h-[2.1em] font-display text-[19px] leading-[1.05] font-medium sm:text-[22px]">
         <Link to={href} className="hover:text-gold-bright">
           {item.name}
         </Link>

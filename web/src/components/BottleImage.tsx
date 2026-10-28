@@ -10,20 +10,28 @@ type Props = {
   // page never moves when the photo (or the placeholder) arrives.
   className?: string;
   lazy?: boolean;
+  // "sepia" (the default) multiplies the photo onto the paper tone (DECISIONS B19);
+  // "true" shows it in its own colours on white, for Browse (B42).
+  tone?: "sepia" | "true";
 };
 
 // A fragrance photo, hotlinked from Fragrantica's image server (DECISIONS B19). If the
 // photo is missing or the server refuses it, a drawn bottle tinted by the fragrance's
 // dominant family takes its place.
-export function BottleImage({ src, family, alt = "", className = "", lazy = false }: Props) {
+export function BottleImage({ src, family, alt = "", className = "", lazy = false, tone = "sepia" }: Props) {
   // Remember which URL failed, so a new src (another fragrance) gets a fresh try.
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const showPhoto = src !== null && failedSrc !== src;
+  const sepia = tone === "sepia";
+  const photoFrame = sepia ? "bg-paper" : "bg-white";
+  // The photos are bottles on white: multiplying them onto paper warms the white away; in
+  // true colour the white frame meets the photo's own white with no seam.
+  const photoLook = sepia ? "bottle-photo mix-blend-multiply" : "";
 
   return (
     // With a photo, the frame turns paper-toned and the photo multiplies onto it, so the
     // photos' white backgrounds become a muted tone instead of glaring on the dark page.
-    <div className={`relative overflow-hidden ${showPhoto ? "bg-paper" : "bg-frame"} ${className}`}>
+    <div className={`relative overflow-hidden ${showPhoto ? photoFrame : "bg-frame"} ${className}`}>
       {showPhoto ? (
         <img
           src={src}
@@ -35,7 +43,7 @@ export function BottleImage({ src, family, alt = "", className = "", lazy = fals
           width={375}
           height={500}
           onError={() => setFailedSrc(src)}
-          className="bottle-photo absolute inset-0 size-full object-contain p-[6%] mix-blend-multiply transition-transform duration-300 group-hover:scale-[1.04]"
+          className={`absolute inset-0 size-full object-contain p-[6%] transition-transform duration-300 group-hover:scale-[1.04] ${photoLook}`}
         />
       ) : (
         <PlaceholderBottle family={family} label={alt} />

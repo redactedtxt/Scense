@@ -33,6 +33,8 @@ function scriptedLlm(): Llm {
         season: NONE,
         setting: said.includes("terrace") ? { value: "outdoor", evidence: "terrace" } : NONE,
         projection: said.includes("subtle") ? { value: "low", evidence: "subtle" } : NONE,
+        budget: NONE,
+        source: NONE,
       };
       return { ...usage, text: JSON.stringify({ slots, next_question: "", question_slot: null }) };
     },
@@ -76,7 +78,7 @@ describe.skipIf(!url)("the concierge against Postgres", () => {
     expect(first.status).toBe(200);
     const id = first.body.conversation.id as string;
     // Occasion, time, and setting came from the message; the season is asked next.
-    expect(first.body.outing.map((s: { value: string | null }) => s.value)).toEqual(["Date night", "Night", null, "Outdoor", null]);
+    expect(first.body.outing.map((s: { value: string | null }) => s.value)).toEqual(["Date night", "Night", null, "Outdoor", null, null]);
     expect(first.body.options).toHaveLength(4); // the four seasons, today's first
     const season = await ask(app, guests[0]!, first.body.options[0], id);
     expect(season.body.options).toEqual(["Low", "Medium", "High"]);

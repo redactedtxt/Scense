@@ -27,6 +27,21 @@ class Mapping:
     facets: frozenset[str]
 
 
+# Price tiers as the CSVs write them, and the number stored for each (DECISIONS B42).
+TIER_SYMBOLS = {"$": 1, "$$": 2, "$$$": 3, "$$$$": 4}
+OVERRIDE_SCOPES = ("collection", "slug")
+
+
+@dataclass(frozen=True)
+class TierOverride:
+    """A line ("collection") or one bottle ("slug") of a brand that sits in another tier."""
+
+    brand: str
+    scope: str
+    value: str
+    tier: int
+
+
 @dataclass(frozen=True)
 class Config:
     family_names: list[str]
@@ -42,6 +57,9 @@ class Config:
     name_aliases: list[tuple[str, str]]
     # slug -> database id for fragrances that already exist in production (DECISIONS B28).
     pinned_ids: dict[str, int]
+    # brand -> default price tier 1..4, and the lines or bottles that differ (DECISIONS B42).
+    brand_tiers: dict[str, int]
+    tier_overrides: list[TierOverride]
 
 
 def _read_yaml(name: str, config_dir: Path) -> dict:
@@ -126,6 +144,39 @@ def read_pinned_ids(path: Path) -> dict[str, int]:
     return dict(zip(df["slug"], df["id"].astype(int), strict=True))
 
 
+def _tier(file_name: str, symbol: str) -> int:
+    if symbol not in TIER_SYMBOLS:
+        raise ValueError(f"{file_name}: tier '{symbol}' is not one of {list(TIER_SYMBOLS)}")
+    return TIER_SYMBOLS[symbol]
+
+
+def read_brand_tiers(path: Path) -> dict[str, int]:
+    """brand -> tier. Brands are spelled as the dataset spells them; `check` is ignored."""
+    df = pd.read_csv(path, usecols=["brand", "tier"], dtype=str, keep_default_na=False)
+    if (df["brand"].str.strip() == "").any():
+        raise ValueError(f"{path.name}: every row needs a brand")
+    duplicated = df["brand"][df["brand"].duplicated()]
+    if len(duplicated):
+        raise ValueError(f"{path.name}: duplicate brand {duplicated.iloc[0]}")
+    return {b: _tier(path.name, t.strip()) for b, t in zip(df["brand"], df["tier"], strict=True)}
+
+
+def read_tier_overrides(path: Path) -> list[TierOverride]:
+    """The `reason` and `check` columns are for the reviewer and are never read."""
+    columns = ["brand", "scope", "value", "tier"]
+    df = pd.read_csv(path, usecols=columns, dtype=str, keep_default_na=False)
+    overrides = []
+    for row in df.itertuples():
+        if row.scope not in OVERRIDE_SCOPES:
+            raise ValueError(f"{path.name}: scope '{row.scope}' is not one of {OVERRIDE_SCOPES}")
+        if not row.brand or not row.value:
+            raise ValueError(f"{path.name}: every row needs a brand and a value")
+        overrides.append(TierOverride(row.brand, row.scope, row.value, _tier(path.name, row.tier)))
+    if len({(o.brand, o.scope, o.value) for o in overrides}) != len(overrides):
+        raise ValueError(f"{path.name}: duplicate override row")
+    return overrides
+
+
 def load_config(config_dir: Path = CONFIG_DIR) -> Config:
     families = _read_yaml("families.yaml", config_dir)["families"]
     families = sorted(families, key=lambda f: f["position"])
@@ -154,4 +205,6 @@ def load_config(config_dir: Path = CONFIG_DIR) -> Config:
         brand_aliases=read_alias_pairs(config_dir / "brand_aliases.csv", "alias", "brand"),
         name_aliases=read_alias_pairs(config_dir / "name_aliases.csv", "alias", "name_word"),
         pinned_ids=read_pinned_ids(config_dir / "pinned_ids.csv"),
+        brand_tiers=read_brand_tiers(config_dir / "brand_tiers.csv"),
+        tier_overrides=read_tier_overrides(config_dir / "tier_overrides.csv"),
     )

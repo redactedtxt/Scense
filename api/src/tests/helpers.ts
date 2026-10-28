@@ -70,6 +70,7 @@ export function modelJson(overrides: Record<string, unknown> = {}): Partial<LlmR
       summary: "You lean toward warm spicy scents.",
       mentioned_fragrances: [],
       ready_to_recommend: false,
+      budget: { kind: "none", max_cad: null, evidence: "" },
       ...overrides,
     }),
   };

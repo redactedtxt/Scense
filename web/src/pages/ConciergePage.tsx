@@ -278,6 +278,7 @@ function storeReply(client: QueryClient, userId: number | null, message: string,
   client.setQueryData<ConciergeOuting>(conciergeOutingKey(userId, reply.conversation.id), (old) => ({
     conversation: reply.conversation,
     outing: reply.outing,
+    beyondOwn: reply.beyondOwn,
     messages: [...(old?.messages ?? []), ...added],
   }));
   client.setQueryData<ConciergeState>(conciergeKey(userId), (old) => {

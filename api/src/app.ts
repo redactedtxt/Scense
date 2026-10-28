@@ -56,19 +56,25 @@ export function createApp(
   app.use("/api", familiesRouter(db));
   app.use("/api", fragrancesRouter(db, settings));
   app.use("/api", notesRouter(db));
-  app.use("/api", pairingRouter(db, matrices));
+  app.use("/api", pairingRouter(db, matrices, settings.price));
   app.use("/api", authRouter(db, auth, now));
   app.use("/api", collectionRouter(db, auth));
   app.use("/api", reviewsRouter(db, auth, now));
   app.use("/api", pairRatingsRouter(db, auth, now));
   app.use("/api", profileRouter(db, auth));
-  const catalogue = createCatalogueCache(db, now);
+  const catalogue = createCatalogueCache(db, settings.price, now);
   app.use(
     "/api",
-    chatRouter({ db, auth, ai: ai.settings, llm: ai.llm, catalogue, fuzzyMinSimilarity: settings.fuzzyMinSimilarity, now }),
+    chatRouter({
+      db, auth, ai: ai.settings, llm: ai.llm, catalogue,
+      fuzzyMinSimilarity: settings.fuzzyMinSimilarity, price: settings.price, now,
+    }),
   );
   if (ai.concierge) {
-    app.use("/api", conciergeRouter({ db, auth, ai: ai.settings, llm: ai.llm, catalogue, concierge: ai.concierge, now }));
+    app.use(
+      "/api",
+      conciergeRouter({ db, auth, ai: ai.settings, llm: ai.llm, catalogue, concierge: ai.concierge, price: settings.price, now }),
+    );
   }
   app.use("/api", adminRouter(db, ai.settings, now));
   app.use("/api", notFoundHandler);

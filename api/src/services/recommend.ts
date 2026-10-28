@@ -1,6 +1,7 @@
 import type { CatalogueEntry, CatalogueSnapshot } from "./catalogueCache.js";
 import type { Slots } from "./concierge.js";
 import type { ConciergeSettings } from "./occasions.js";
+import { budgetFactor, type Budget, type Price, type PriceSettings, type Value } from "./price.js";
 import { tasteVector, type TasteProfile } from "./taste.js";
 
 // The server picks every fragrance, for the chat and for the concierge.
@@ -15,6 +16,8 @@ export type Recommendation = {
   brand: string;
   imageUrl: string | null;
   dominantFamily: string;
+  price: Price | null;
+  value: Value | null;
   owned: boolean;
   match: number; // 0-100, the cosine similarity as a percentage
 };
@@ -42,11 +45,15 @@ export function cosine(a: number[], b: number[]): number {
 // are the best bottles the visitor doesn't own. Any bottle needs a positive score to
 // count as a match at all. `exclude` holds bottles the visitor named in the chat: they
 // already know those, so they are never picked.
+//
+// A budget the visitor stated (DECISIONS B42) reorders only the bottles they don't own:
+// they already have the owned ones. It scales each bottle's rank, not the match shown,
+// and never drops a bottle, so a much better match outside the budget can still appear.
 export function recommend(
   entries: CatalogueEntry[],
   profile: TasteProfile,
   ownedIds: Set<number>,
-  options: { ownedMinMatch: number; exclude?: Set<number> },
+  options: { ownedMinMatch: number; exclude?: Set<number>; budget?: Budget | null; price?: PriceSettings },
 ): Recommendation[] {
   const taste = tasteVector(profile);
   const exclude = options.exclude ?? new Set<number>();
@@ -61,20 +68,25 @@ export function recommend(
     .filter(({ entry, score }) => ownedIds.has(entry.id) && score >= options.ownedMinMatch)
     .slice(0, PER_GROUP);
   const bestOwned = owned[0]?.score ?? 0;
+  const budget = options.budget ?? null;
+  const pull = (entry: CatalogueEntry) =>
+    budget && options.price ? budgetFactor(entry.priceTier, budget, options.price) : 1;
   const others = scored
     .filter(({ entry, score }) => !ownedIds.has(entry.id) && score > bestOwned)
+    .map((pick) => ({ ...pick, rank: pick.score * pull(pick.entry) }))
+    .sort((a, b) => b.rank - a.rank || a.entry.id - b.entry.id)
     .slice(0, PER_GROUP);
 
   return [...owned, ...others].map(({ entry, score }) => ({
-    id: entry.id,
-    slug: entry.slug,
-    name: entry.name,
-    brand: entry.brand,
-    imageUrl: entry.imageUrl,
-    dominantFamily: entry.dominantFamily,
-    owned: ownedIds.has(entry.id),
+    ...cardOf(entry, ownedIds),
     match: Math.round(score * 100),
   }));
+}
+
+// What a pick card shows about a bottle.
+function cardOf(entry: CatalogueEntry, owned: Set<number>): Omit<Recommendation, "match"> {
+  const { id, slug, name, brand, imageUrl, dominantFamily, price, value } = entry;
+  return { id, slug, name, brand, imageUrl, dominantFamily, price, value, owned: owned.has(id) };
 }
 
 // Cards for stored picks (a reopened chat or outing), rebuilt from their ids. A bottle
@@ -83,9 +95,7 @@ export function cardsFor(ids: number[], snapshot: CatalogueSnapshot, owned: Set<
   const byId = new Map(snapshot.entries.map((entry) => [entry.id, entry]));
   return ids.flatMap((id) => {
     const entry = byId.get(id);
-    if (!entry) return [];
-    const { slug, name, brand, imageUrl, dominantFamily } = entry;
-    return [{ id, slug, name, brand, imageUrl, dominantFamily, owned: owned.has(id) }];
+    return entry ? [cardOf(entry, owned)] : [];
   });
 }
 
@@ -94,8 +104,10 @@ export function cardsFor(ids: number[], snapshot: CatalogueSnapshot, owned: Set<
 // An outing ready to score. Every slot is filled, except that the occasion can be null
 // on a forced result (the day's last message, DECISIONS B38): occasion fit is then left
 // out, for every bottle alike.
-export type FullSlots = { [K in Exclude<keyof Slots, "occasion">]: NonNullable<Slots[K]> } & {
+export type FullSlots = { [K in Exclude<keyof Slots, "occasion" | "budget" | "source">]: NonNullable<Slots[K]> } & {
   occasion: Slots["occasion"];
+  budget: Slots["budget"];
+  source: Slots["source"];
 };
 
 export type OutingTerms = { season: number; daynight: number; projection: number; occasion: number; taste: number };
@@ -175,20 +187,31 @@ export function scoreOuting(
 // The top pick and 2 alternatives from the visitor's Own list. With nothing owned (or
 // only ids the catalogue doesn't hold) the whole catalogue is the candidate list, and
 // `fromCatalogue` says so, so the page can tell the visitor in one line.
+//
+// An outing whose source is "catalogue" (DECISIONS B42) picks from the catalogue minus
+// the Own list (`skippedOwned`). On catalogue picks a budget scales each bottle's score
+// (a preference, not a filter); on Own-list picks it does nothing, since those are
+// already bought.
 export function conciergePicks(
   entries: CatalogueEntry[],
   ownedIds: Set<number>,
   slots: FullSlots,
   profile: TasteProfile | null,
   settings: ConciergeSettings,
-): { picks: OutingScore[]; fromCatalogue: boolean } {
+  pricing?: { budget: Budget | null; price: PriceSettings },
+): { picks: OutingScore[]; fromCatalogue: boolean; skippedOwned: boolean } {
   const ranges = shareRanges(entries);
   const owned = entries.filter((entry) => ownedIds.has(entry.id));
-  const candidates = owned.length > 0 ? owned : entries;
+  const skippedOwned = slots.source === "catalogue" && owned.length > 0;
+  const fromCatalogue = owned.length === 0 || skippedOwned;
+  const candidates = !fromCatalogue ? owned : entries.filter((entry) => !ownedIds.has(entry.id));
+  const pull = (entry: CatalogueEntry) =>
+    fromCatalogue && pricing ? budgetFactor(entry.priceTier, pricing.budget, pricing.price) : 1;
   const picks = candidates
     .map((entry) => scoreOuting(entry, slots, profile, settings, ranges))
+    .map((scored) => ({ ...scored, score: scored.score * pull(scored.entry) }))
     // Ties go to the lower id (the more voted original catalogue), as in the chat.
     .sort((a, b) => b.score - a.score || a.entry.id - b.entry.id)
     .slice(0, PICKS);
-  return { picks, fromCatalogue: owned.length === 0 };
+  return { picks, fromCatalogue, skippedOwned };
 }

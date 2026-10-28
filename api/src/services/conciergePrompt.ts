@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SETTINGS, SLOT_NAMES, TIMES, type SlotName, type Slots } from "./concierge.js";
+import { ALL_SLOTS, BUDGETS, SETTINGS, SLOT_NAMES, SOURCES, TIMES, type SlotName, type Slots } from "./concierge.js";
 import { OCCASIONS, PROJECTIONS, SEASONS, type ConciergeSettings } from "./occasions.js";
 
 // What the concierge model is told, and the shapes it must answer in (SPEC section 9;
@@ -18,7 +18,11 @@ function slotGuide(settings: ConciergeSettings): string {
 - time_of_day: day or night. "dinner at 8", "tonight", "after work drinks" mean night; "lunch", "brunch", "this morning" mean day.
 - season: winter, spring, summer, or autumn. Fill it from a named season or plain weather: "snowy", "freezing" mean winter; "hot and humid", "a heatwave" mean summer. A mild or vague description ("chilly", "nice out") is not enough.
 - setting: indoor or outdoor. "a restaurant", "the office", "a ballroom" mean indoor; "a picnic", "a patio", "a hike" mean outdoor.
-- projection: low, medium, or high: how far the scent should carry. Only from words about the scent itself: "subtle", "close to the skin" mean low; "noticeable but not loud" means medium; "I want to be noticed", "fill the room", "loud" mean high. Never guess it from the occasion.`;
+- projection: low, medium, or high: how far the scent should carry. Only from words about the scent itself: "subtle", "close to the skin" mean low; "noticeable but not loud" means medium; "I want to be noticed", "fill the room", "loud" mean high. Never guess it from the occasion.
+
+Two optional slots, never asked about: fill them only when the visitor says so.
+- budget: how much they want to spend, as the highest approximate tier: $ (under 75 dollars, "cheap"), $$ (up to 150, "affordable", "mid-range"), $$$ (up to 300), $$$$ ("luxury", "niche", "money is no object"), or any ("price doesn't matter"). Never write a price yourself.
+- source: catalogue when they want something they don't already own ("something new", "something I don't have", "not from my collection").`;
 }
 
 function extractionRules(questionMaxWords: number): string {
@@ -68,6 +72,8 @@ const SLOT_SCHEMAS = {
   season: slotSchema(SEASONS),
   setting: slotSchema(SETTINGS),
   projection: slotSchema(PROJECTIONS),
+  budget: slotSchema(BUDGETS),
+  source: slotSchema(SOURCES),
 };
 
 // JSON schema for Anthropic structured outputs: the API itself holds the model to it.
@@ -75,7 +81,7 @@ export const EXTRACTION_SCHEMA: Record<string, unknown> = {
   type: "object",
   additionalProperties: false,
   properties: {
-    slots: { type: "object", additionalProperties: false, properties: SLOT_SCHEMAS, required: [...SLOT_NAMES] },
+    slots: { type: "object", additionalProperties: false, properties: SLOT_SCHEMAS, required: [...ALL_SLOTS] },
     next_question: { type: "string" },
     question_slot: nullable({ type: "string", enum: [...SLOT_NAMES] }),
   },
@@ -94,6 +100,8 @@ export const extractionOutput = z.strictObject({
     season: slotOutput(SEASONS),
     setting: slotOutput(SETTINGS),
     projection: slotOutput(PROJECTIONS),
+    budget: slotOutput(BUDGETS),
+    source: slotOutput(SOURCES),
   }),
   next_question: z.string().max(400),
   question_slot: z.enum(SLOT_NAMES).nullable(),

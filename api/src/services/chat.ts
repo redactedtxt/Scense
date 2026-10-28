@@ -1,5 +1,7 @@
 import type { z } from "zod";
+import { simplify } from "./concierge.js";
 import { LlmUnavailableError, type Llm, type LlmMessage } from "./llm.js";
+import { describeBudget, type Budget, type PriceSettings } from "./price.js";
 import { modelOutput, OUTPUT_SCHEMA, type ModelOutput } from "./prompt.js";
 import { capWords, withoutRuleTalk, type ReplyGuard } from "./replyGuard.js";
 import {
@@ -151,6 +153,35 @@ export function fallbackReply(update: ProfileUpdate): string {
     dislikes.length > 0 ? `you'd rather avoid ${dislikes.join(", ")}` : null,
   ].filter(Boolean);
   return `Noted: ${heard.join(", and ")}. I've updated your taste profile. Tell me more about scents you love or can't stand.`;
+}
+
+// --- budgets (DECISIONS B42) -----------------------------------------------------------
+
+// A budget change this message really made, or null for none. Like the concierge's
+// slots, the model's reading counts only when its evidence is the visitor's own words
+// in this message, so it can't invent a budget. { budget: null } clears one ("price
+// doesn't matter"). A "max" needs a sensible amount.
+export function budgetFrom(said: ModelOutput["budget"], message: string): { budget: Budget | null } | null {
+  if (said.kind === "none") return null;
+  const quote = simplify(said.evidence);
+  if (quote.length < 2 || !simplify(message).includes(quote)) return null;
+  switch (said.kind) {
+    case "any":
+      return { budget: null };
+    case "affordable":
+    case "luxury":
+      return { budget: { kind: said.kind } };
+    case "max":
+      return said.max_cad !== null && said.max_cad > 0 && said.max_cad <= 100_000
+        ? { budget: { kind: "max", maxCad: said.max_cad } }
+        : null;
+  }
+}
+
+// The server's sentence when the budget changes. Tier symbols only, never an amount.
+export function budgetNote(budget: Budget | null, price: PriceSettings): string {
+  if (budget === null) return "Noted: price doesn't matter, so picks ignore it.";
+  return `Noted your budget: picks now lean toward ${describeBudget(budget, price)} bottles (approximate tiers).`;
 }
 
 // Shown (and stored) when the model's answer failed validation twice. The message still

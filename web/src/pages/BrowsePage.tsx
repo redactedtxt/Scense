@@ -3,8 +3,9 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { BottleImage } from "../components/BottleImage";
 import { SearchIcon } from "../components/Icons";
+import { BrandLink, PriceLine } from "../components/Price";
 import { Notice, OutlineButton, Segmented, Tag } from "../components/ui";
-import { api, type FragranceSummary, type Sort } from "../lib/api";
+import { api, ApiError, type FragranceSummary, type Sort } from "../lib/api";
 import { formatCount } from "../lib/labels";
 import { useFamilies } from "../lib/queries";
 import { useDebounced } from "../lib/useDebounced";
@@ -26,13 +27,15 @@ const PAGE_SIZE = 24;
 const EAGER_CARDS = 4;
 
 // "/browse": the catalogue grid. Search, filters, sort, and page live in the URL, so the
-// back button and shared links restore the same view.
+// back button and shared links restore the same view. With ?brand= it is that brand's
+// page (DECISIONS B42): the same grid, filters, and sort, under the brand's name.
 export function BrowsePage() {
   const [params, setParams] = useSearchParams();
   const filters = {
     q: params.get("q") ?? "",
     gender: params.get("gender") ?? "",
     family: params.get("family") ?? "",
+    brand: params.get("brand") ?? "",
     // An unknown ?sort= is ignored, like the default, which stays out of the URL.
     sort: SORT_OPTIONS.find((o) => o.value === params.get("sort"))?.value ?? ("" as const),
     page: Math.max(1, Number(params.get("page")) || 1),
@@ -68,18 +71,14 @@ export function BrowsePage() {
     placeholderData: keepPreviousData,
   });
 
+  // The brand as the catalogue spells it, once the API has said ("ysl" is Yves Saint Laurent).
+  const brandName = list.data?.brand ?? (filters.brand || null);
+  const unknownBrand = list.error instanceof ApiError && list.error.code === "unknown_brand";
+
   return (
     <>
-      <title>Browse · Scense</title>
-      <section className="pt-[58px] pb-10 sm:pt-[72px] sm:pb-12">
-        <p className="kicker">The catalogue</p>
-        <h1 className="mt-4 mb-5 font-display text-[54px] leading-[0.88] font-medium tracking-display sm:text-[clamp(54px,6.2vw,88px)]">
-          Browse <em className="accent">every bottle.</em>
-        </h1>
-        <p className="m-0 max-w-[485px] font-display text-lg leading-[1.45] text-soft sm:text-xl">
-          The most-voted fragrances on Fragrantica, with notes, accords, and community ratings.
-        </p>
-      </section>
+      <title>{brandName ? `${brandName} · Scense` : "Browse · Scense"}</title>
+      {filters.brand ? <BrandHeading brand={brandName ?? filters.brand} /> : <CatalogueHeading />}
       <Filters filters={filters} onChange={setFilter} />
       <ResultCount
         total={list.data?.total}
@@ -88,7 +87,8 @@ export function BrowsePage() {
         onSortChange={(sort) => setFilter("sort", sort)}
       />
       <div aria-busy={list.isFetching} className={`transition-opacity ${list.isPlaceholderData ? "opacity-50" : ""}`}>
-        {list.isError && <Notice role="alert">Could not load the catalogue. Try again in a moment.</Notice>}
+        {unknownBrand && <Notice role="alert">There is no brand called “{filters.brand}” in the catalogue.</Notice>}
+        {list.isError && !unknownBrand && <Notice role="alert">Could not load the catalogue. Try again in a moment.</Notice>}
         {list.data?.total === 0 && <Notice>No fragrance matches. Try a shorter search or clear a filter.</Notice>}
         <ul className="m-0 grid list-none grid-cols-2 gap-x-4 gap-y-10 p-0 sm:grid-cols-3 sm:gap-x-6 md:grid-cols-4 md:gap-x-8">
           {list.isPending && Array.from({ length: PAGE_SIZE }, (_, i) => <CardSkeleton key={i} />)}
@@ -115,7 +115,38 @@ export function BrowsePage() {
   );
 }
 
-type Filters = { q: string; gender: string; family: string; sort: Sort | ""; page: number };
+function CatalogueHeading() {
+  return (
+    <section className="pt-[58px] pb-10 sm:pt-[72px] sm:pb-12">
+      <p className="kicker">The catalogue</p>
+      <h1 className="mt-4 mb-5 font-display text-[54px] leading-[0.88] font-medium tracking-display sm:text-[clamp(54px,6.2vw,88px)]">
+        Browse <em className="accent">every bottle.</em>
+      </h1>
+      <p className="m-0 max-w-[485px] font-display text-lg leading-[1.45] text-soft sm:text-xl">
+        The most-voted fragrances on Fragrantica, with notes, accords, and community ratings.
+      </p>
+    </section>
+  );
+}
+
+// A brand page's heading: the brand's name, and a way back to every brand.
+function BrandHeading({ brand }: { brand: string }) {
+  return (
+    <section className="pt-[58px] pb-10 sm:pt-[72px] sm:pb-12">
+      <Link to="/browse" className="kicker inline-block hover:text-gold-bright">
+        ← All brands
+      </Link>
+      <h1 className="mt-4 mb-5 font-display text-[54px] leading-[0.92] font-medium tracking-display sm:text-[clamp(54px,6.2vw,88px)]">
+        {brand}
+      </h1>
+      <p className="m-0 max-w-[485px] font-display text-lg leading-[1.45] text-soft sm:text-xl">
+        Every {brand} bottle in the catalogue, with the same search, filters, and sort.
+      </p>
+    </section>
+  );
+}
+
+type Filters = { q: string; gender: string; family: string; brand: string; sort: Sort | ""; page: number };
 type FilterKey = "q" | "gender" | "family" | "sort";
 
 function Filters({ filters, onChange }: { filters: Filters; onChange: (key: FilterKey, v: string) => void }) {
@@ -171,7 +202,7 @@ function ResultCount(props: {
   onSortChange: (sort: string) => void;
 }) {
   const { total, fuzzy, filters } = props;
-  const filtered = filters.q || filters.gender || filters.family;
+  const filtered = filters.q || filters.gender || filters.family || filters.brand;
   const noun = total === 1 ? "fragrance" : "fragrances";
   const text = fuzzy
     ? `No exact match for “${filters.q}”. Showing ${formatCount(total ?? 0)} close ${total === 1 ? "match" : "matches"}.`
@@ -199,26 +230,44 @@ function ResultCount(props: {
   );
 }
 
-// One grid card: photo in a fixed 3:4 frame, then brand, a two-line name, family, rating.
+// One grid card: photo in a fixed 3:4 frame, then brand, a two-line name, family, rating,
+// and the price guide. The name's link stretches over the whole card (its ::after), so a
+// click anywhere opens the bottle, while the brand link and the tier label sit above that
+// layer as their own controls (a link can't hold another link or a button).
+//
+// The photo shows in true colour on white with a thin accent-gold frame, brighter on hover
+// and focus (DECISIONS B42); elsewhere photos keep the sepia paper look (B19).
 function FragranceCard({ fragrance: f, lazy }: { fragrance: FragranceSummary; lazy: boolean }) {
   return (
-    <li>
-      <Link to={`/f/${f.slug}`} className="group block">
-        <BottleImage src={f.imageUrl} family={f.dominantFamily} className="aspect-[3/4] w-full" lazy={lazy} />
-        <p className="kicker mt-4 truncate">{f.brand}</p>
-        <h2 className="mt-1.5 mb-3 line-clamp-2 min-h-[2.1em] font-display text-[19px] leading-[1.05] font-medium group-hover:text-gold-bright sm:text-[22px]">
+    <li className="group relative">
+      <BottleImage
+        src={f.imageUrl}
+        family={f.dominantFamily}
+        tone="true"
+        className="aspect-[3/4] w-full outline-1 outline-gold-pale/45 transition-[outline-color] group-focus-within:outline-gold-pale group-hover:outline-gold-pale"
+        lazy={lazy}
+      />
+      <p className="kicker mt-4 truncate">
+        <BrandLink brand={f.brand} />
+      </p>
+      {/* leading 1.25 makes each line of the name link 24px or more, the minimum tap height. */}
+      <h2 className="mt-2 mb-3 line-clamp-2 min-h-[2.5em] font-display text-[19px] leading-[1.25] font-medium sm:text-[22px]">
+        <Link to={`/f/${f.slug}`} className="after:absolute after:inset-0 group-hover:text-gold-bright">
           {f.name}
-        </h2>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <Tag>{f.dominantFamily}</Tag>
-          {f.communityRating !== null && (
-            <span className="text-[10px] text-dim">
-              <span className="text-gold-bright">{f.communityRating.toFixed(2)}</span>
-              <span className="sr-only"> out of 5</span> · {formatCount(f.ratingVotes ?? 0)} votes
-            </span>
-          )}
-        </div>
-      </Link>
+        </Link>
+      </h2>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <Tag>{f.dominantFamily}</Tag>
+        {f.communityRating !== null && (
+          <span className="text-[10px] text-dim">
+            <span className="text-gold-bright">{f.communityRating.toFixed(2)}</span>
+            <span className="sr-only"> out of 5</span> · {formatCount(f.ratingVotes ?? 0)} votes
+          </span>
+        )}
+      </div>
+      <div className="relative z-10 mt-2.5 w-fit">
+        <PriceLine info={f} compact />
+      </div>
     </li>
   );
 }

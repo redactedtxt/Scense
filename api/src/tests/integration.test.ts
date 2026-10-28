@@ -335,3 +335,47 @@ describe.skipIf(!url)("against the loaded catalogue", () => {
     expect(res.body.items).toHaveLength(14);
   });
 });
+
+// Price guidance and brand pages (DECISIONS B42), against the real tier columns and aliases.
+describe.skipIf(!url)("price tiers, note pictures, and brand pages", () => {
+  const pool = new pg.Pool({ connectionString: url });
+  const app = createApp(pool, matrices, settings, auth);
+  afterAll(() => pool.end());
+  const detail = async (slug: string) => (await request(app).get(`/api/fragrances/${slug}`)).body;
+
+  it("shows a line's tier over its brand's: Private Blend is $$$$, Club de Nuit is $", async () => {
+    expect((await detail("tom-ford-tobacco-vanille-2007")).price).toMatchObject({ tier: 4, minCad: 300, maxCad: null });
+    const cdnim = await detail("armaf-club-de-nuit-intense-man-2015");
+    expect(cdnim.price).toMatchObject({ tier: 1, minCad: null, maxCad: 75 });
+    expect(cdnim.value.votes).toBeGreaterThanOrEqual(settings.price.minValueVotes);
+  });
+
+  it("gives notes their pictures and their family's tint", async () => {
+    const notes = (await detail("creed-aventus-2010")).notes;
+    const all = [...notes.top, ...notes.heart, ...notes.base, ...notes.flat];
+    expect(all.find((n: { name: string }) => n.name === "Bergamot")).toMatchObject({
+      imageUrl: "https://fimgs.net/mdimg/sastojci/t.75.jpg",
+      family: "Citrus",
+    });
+  });
+
+  it("lands YSL, 'yves saint laurent', and the full name on one brand page", async () => {
+    const pages = await Promise.all(
+      ["YSL", "yves saint laurent", "Yves Saint Laurent"].map((brand) => request(app).get("/api/fragrances").query({ brand })),
+    );
+    for (const page of pages) {
+      expect(page.status).toBe(200);
+      expect(page.body.brand).toBe("Yves Saint Laurent");
+      expect(page.body.total).toBe(pages[0]!.body.total);
+      for (const item of page.body.items) expect(item.brand).toBe("Yves Saint Laurent");
+    }
+    expect(pages[0]!.body.total).toBeGreaterThan(0);
+  });
+
+  it("finds an accented brand without its accent, and keeps the sort on a brand page", async () => {
+    const res = await request(app).get("/api/fragrances").query({ brand: "hermes", sort: "least-popular" });
+    expect(res.body.brand).toBe("Hermès");
+    const votes = res.body.items.map((i: { ratingVotes: number }) => i.ratingVotes);
+    expect(votes).toEqual([...votes].sort((a, b) => a - b));
+  });
+});

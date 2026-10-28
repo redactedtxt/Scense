@@ -50,10 +50,34 @@ describe("GET /api/fragrances", () => {
   const listRoutes = (total: number) =>
     [
       [/count\(\*\)/, [{ total }]],
+      // A brand page asks which brand a spelling means first (DECISIONS B42).
+      [/FROM brand_aliases a/, (params: unknown[]) => (["YSL", "Yves Saint Laurent"].includes(params[0] as string) ? [{ brand: "Yves Saint Laurent" }] : [])],
       [/FROM fragrances f/, [{ id: 7, slug: "a-b-2000", name: "B", brand: "A", gender: "male", release_year: 2000,
-        image_url: null, community_rating: 4.1, rating_votes: 900, strength: 3, family: "Woods" }]],
+        image_url: null, community_rating: 4.1, rating_votes: 900, strength: 3, family: "Woods",
+        price_tier: 3, value_score: 3.2468, value_votes: 1873 }]],
       [/FROM families WHERE lower/, [{ id: 3 }]],
     ] as Parameters<typeof appWith>[0];
+
+  it("gives each bottle its approximate tier and value votes", async () => {
+    const { app } = appWith(listRoutes(1));
+    const res = await request(app).get("/api/fragrances");
+    expect(res.body.items[0]).toMatchObject({
+      price: { tier: 3, minCad: 150, maxCad: 300 },
+      value: { score: 3.25, votes: 1873 },
+    });
+    expect(res.body.brand).toBeNull();
+  });
+
+  it("filters to one brand, reached by its name or an alias, and names it for the heading", async () => {
+    const { app, calls } = appWith(listRoutes(1));
+    const res = await request(app).get("/api/fragrances").query({ brand: "YSL" });
+    expect(res.status).toBe(200);
+    expect(res.body.brand).toBe("Yves Saint Laurent");
+    expect(calls.at(-1)!.params).toEqual([null, null, null, "Yves Saint Laurent", 0]);
+    const unknown = await request(app).get("/api/fragrances").query({ brand: "Nobody" });
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.error.code).toBe("unknown_brand");
+  });
 
   it("returns a page of summaries with paging info", async () => {
     const { app, calls } = appWith(listRoutes(50));
@@ -61,13 +85,13 @@ describe("GET /api/fragrances", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ page: 2, pageSize: 24, total: 50, totalPages: 3 });
     expect(res.body.items[0]).toMatchObject({ id: 7, slug: "a-b-2000", dominantFamily: "Woods", releaseYear: 2000 });
-    expect(calls.at(-1)!.params).toEqual([null, null, null, 24]); // page 2 skips 24
+    expect(calls.at(-1)!.params).toEqual([null, null, null, null, 24]); // page 2 skips 24
   });
 
   it("turns the search text into a prefix query and passes filters through", async () => {
     const { app, calls } = appWith(listRoutes(1));
     await request(app).get("/api/fragrances").query({ q: "cool wat", gender: "male", family: "woods" });
-    expect(calls.at(-1)!.params).toEqual(["cool:* & wat:*", "male", 3, 0]);
+    expect(calls.at(-1)!.params).toEqual(["cool:* & wat:*", "male", 3, null, 0]);
   });
 
   it("rejects a bad gender, a bad page, and an unknown family", async () => {
@@ -152,7 +176,7 @@ describe("GET /api/fragrances sorting and the typo fallback", () => {
     expect(res.body).toMatchObject({ fuzzy: true, total: 1 });
     expect(res.body.items[0]).toMatchObject({ name: "Sauvage" });
     // words, minimum similarity from scoring.yaml, then gender, family, offset
-    expect(fuzzyCalls(calls).at(-1)!.params).toEqual([["sauvge"], settings.fuzzyMinSimilarity, "male", null, 0]);
+    expect(fuzzyCalls(calls).at(-1)!.params).toEqual([["sauvge"], settings.fuzzyMinSimilarity, "male", null, null, 0]);
   });
 
   it("does not fall back when the text matches and only the filters excluded it", async () => {

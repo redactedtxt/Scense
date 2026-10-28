@@ -14,6 +14,9 @@ from pipeline_config import Config, Mapping
 SEASONS = ["winter", "spring", "summer", "autumn"]
 DAY_NIGHT = ["day", "night"]
 
+# Fragrantica's 120 px note icon (DECISIONS B42), hotlinked like the bottle photos (B19).
+NOTE_IMAGE_URL = "https://fimgs.net/mdimg/sastojci/t.{id}.jpg"
+
 
 def facet_vector(facets: frozenset[str], facet_names: list[str]) -> np.ndarray:
     """1.0 for each facet a mapping carries, 0.0 for the rest."""
@@ -111,14 +114,28 @@ def build_note_profile(mapping: Mapping, cfg: Config) -> dict:
     }
 
 
+def note_image_urls(catalogue: pd.DataFrame) -> dict[str, str]:
+    """Note name -> its Fragrantica icon URL, for notes the dataset has a picture of."""
+    urls: dict[str, str] = {}
+    for notes in catalogue["notes"]:
+        for n in json.loads(notes):
+            if n.get("image_id") is not None:
+                urls.setdefault(n["note"], NOTE_IMAGE_URL.format(id=n["image_id"]))
+    return urls
+
+
 def build_note_profiles(cfg: Config, catalogue: pd.DataFrame) -> pd.DataFrame:
     """One row per note. Mapped notes get a profile; every other note in the catalogue is
-    kept with `mapped` False and no profile, so the fragrance page can still show it."""
+    kept with `mapped` False and no profile, so the fragrance page can still show it.
+    Every note carries its icon URL, or None when the dataset has no picture."""
     rows = [
         {"name": n, "mapped": True, **build_note_profile(m, cfg)} for n, m in cfg.note_map.items()
     ]
     seen = {n["note"] for notes in catalogue["notes"] for n in json.loads(notes)}
     rows += [{"name": n, "mapped": False} for n in sorted(seen - set(cfg.note_map))]
+    urls = note_image_urls(catalogue)
+    for row in rows:
+        row["image_url"] = urls.get(row["name"])
     return pd.DataFrame(rows)
 
 

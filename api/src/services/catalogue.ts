@@ -1,12 +1,21 @@
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
 import { z } from "zod";
+import type { PriceSettings } from "./price.js";
 
-// Settings for catalogue search and the Browse sort. They live in the same scoring.yaml
-// as the pairing numbers (DECISIONS B23, B24), so the API image needs no extra file.
+// Settings for catalogue search, the Browse sort, and price guidance. They live in the
+// same scoring.yaml as the pairing numbers (DECISIONS B23, B24, B42), so the API image
+// needs no extra file.
 const settingsSchema = z.object({
   search: z.object({ fuzzy_min_similarity: z.number().min(0).max(1) }),
   browse: z.object({ rating_weight_votes: z.number().positive() }),
+  price: z.object({
+    tier_edges_cad: z
+      .tuple([z.number().positive(), z.number().positive(), z.number().positive()])
+      .refine(([a, b, c]) => a < b && b < c, "tier_edges_cad must increase"),
+    min_value_votes: z.number().int().min(0),
+    budget_pull: z.number().min(0).max(1),
+  }),
 });
 
 export interface CatalogueSettings {
@@ -16,11 +25,16 @@ export interface CatalogueSettings {
   // The "m" of the weighted rating: the vote count at which a bottle's own rating
   // counts as much as the catalogue average.
   ratingWeightVotes: number;
+  price: PriceSettings;
 }
 
 export function loadCatalogueSettings(path: string): CatalogueSettings {
-  const { search, browse } = settingsSchema.parse(parse(readFileSync(path, "utf8")));
-  return { fuzzyMinSimilarity: search.fuzzy_min_similarity, ratingWeightVotes: browse.rating_weight_votes };
+  const { search, browse, price } = settingsSchema.parse(parse(readFileSync(path, "utf8")));
+  return {
+    fuzzyMinSimilarity: search.fuzzy_min_similarity,
+    ratingWeightVotes: browse.rating_weight_votes,
+    price: { tierEdgesCad: price.tier_edges_cad, minValueVotes: price.min_value_votes, budgetPull: price.budget_pull },
+  };
 }
 
 // The URL spellings of the Browse sort control. The first is the default.

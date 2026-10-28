@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import { BottleImage } from "../../components/BottleImage";
+import { BrandLink, PriceLine } from "../../components/Price";
 import { FamilyTag, Tag } from "../../components/ui";
 import type { ConciergePick } from "../../lib/api";
 import { useOwnedIds } from "../../lib/collection";
@@ -24,10 +25,15 @@ export function PickCards({ picks }: { picks: ConciergePick[] }) {
                 {pick.name}
               </Link>
             </h3>
-            <p className="m-0 mb-2 text-[11px] text-dim">{pick.brand}</p>
+            <p className="m-0 mb-2 text-[11px] text-dim">
+              <BrandLink brand={pick.brand} />
+            </p>
             <div className="mb-2 flex flex-wrap gap-1.5">
               <FamilyTag family={pick.dominantFamily} />
               {(pick.owned || owned.has(pick.id)) && <Tag tone="owned">Owned</Tag>}
+            </div>
+            <div className="mb-2">
+              <PriceLine info={pick} compact />
             </div>
             <p className="m-0 text-[13px] leading-relaxed text-text-input">{pick.reason}</p>
           </div>

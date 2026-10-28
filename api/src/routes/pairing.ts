@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Db } from "../db.js";
 import { ApiError } from "../middleware/errors.js";
 import { parseInput } from "../middleware/validate.js";
+import { priceOf, valueOf, type PriceSettings } from "../services/price.js";
 import { GOALS, rankNotes, type Matrices, type NoteProfile } from "../services/scoring.js";
 import { dominantFamilyId } from "../services/sql.js";
 import { PAGE_SIZE } from "./fragrances.js";
@@ -45,7 +46,7 @@ const rankParams = z.object({ slug: slugParam, partnerSlug: slugParam });
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
-export function pairingRouter(db: Db, matrices: Matrices): Router {
+export function pairingRouter(db: Db, matrices: Matrices, price: PriceSettings): Router {
   const router = Router();
 
   // Notes use MAPPED notes only: an unmapped note has no wheel profile to score.
@@ -76,7 +77,8 @@ export function pairingRouter(db: Db, matrices: Matrices): Router {
     const total = await listSize(db, base.id, goal);
     const matching = ownedOnly ? await ownedListSize(db, base.id, goal, owned) : total;
     const { rows } = await db.query(
-      `SELECT ps.rank, ps.score, p.id, p.slug, p.name, p.brand, p.image_url, fam.name AS family
+      `SELECT ps.rank, ps.score, p.id, p.slug, p.name, p.brand, p.image_url,
+              p.price_tier, p.value_score, p.value_votes, fam.name AS family
          FROM pair_scores ps
          JOIN fragrances p ON p.id = ps.partner_id
          JOIN families fam ON fam.id = ${dominantFamilyId("p.profile")}
@@ -95,7 +97,7 @@ export function pairingRouter(db: Db, matrices: Matrices): Router {
       total,
       matching,
       totalPages: Math.ceil(matching / PAGE_SIZE),
-      items: rows.map((r) => partnerItem(r, ownedSet)),
+      items: rows.map((r) => partnerItem(r, ownedSet, price)),
     });
   });
 
@@ -125,7 +127,7 @@ export function pairingRouter(db: Db, matrices: Matrices): Router {
   return router;
 }
 
-function partnerItem(r: Record<string, unknown>, ownedSet: Set<number>) {
+function partnerItem(r: Record<string, unknown>, ownedSet: Set<number>, price: PriceSettings) {
   return {
     id: r.id,
     rank: r.rank,
@@ -135,6 +137,8 @@ function partnerItem(r: Record<string, unknown>, ownedSet: Set<number>) {
     brand: r.brand,
     imageUrl: r.image_url,
     dominantFamily: r.family,
+    price: priceOf(r.price_tier, price),
+    value: valueOf(r.value_score, r.value_votes, price),
     owned: ownedSet.has(r.id as number),
   };
 }

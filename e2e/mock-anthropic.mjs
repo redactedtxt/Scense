@@ -34,12 +34,14 @@ function chatAnswer() {
     summary: "You lean toward warm, spicy, slightly sweet scents.",
     mentioned_fragrances: [],
     ready_to_recommend: true,
+    budget: { kind: "none", max_cad: null, evidence: "" },
   };
 }
 
 function slotsAnswer(said) {
   const text = said.toLowerCase();
-  const slots = Object.fromEntries(SLOT_NAMES.map((name) => [name, { value: null, evidence: "" }]));
+  // budget and source are the optional slots (DECISIONS B42); the smoke tests never set them.
+  const slots = Object.fromEntries([...SLOT_NAMES, "budget", "source"].map((name) => [name, { value: null, evidence: "" }]));
   for (const [phrase, slot, value] of SLOT_PHRASES) {
     if (text.includes(phrase)) slots[slot] = { value, evidence: phrase };
   }

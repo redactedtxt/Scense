@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { BottleImage } from "../../components/BottleImage";
+import { BrandLink, PriceLine } from "../../components/Price";
 import { FamilyTag, Tag } from "../../components/ui";
 import type { ChatMessage, ChatRecommendation } from "../../lib/api";
 import { useOwnedIds } from "../../lib/collection";
@@ -119,8 +120,10 @@ function Recommendations({ items }: { items: ChatRecommendation[] }) {
               <BottleImage src={item.imageUrl} family={item.dominantFamily} className="aspect-[3/4] w-full" lazy />
             </Link>
             <div className="min-w-0">
-              <p className="kicker truncate">{item.brand}</p>
-              <h3 className="mt-1 mb-2 line-clamp-2 font-display text-[19px] leading-[1.05] font-medium">
+              <p className="kicker truncate">
+                <BrandLink brand={item.brand} />
+              </p>
+              <h3 className="mt-2 mb-2 line-clamp-2 font-display text-[19px] leading-[1.05] font-medium">
                 <Link to={`/f/${item.slug}`} className="hover:text-gold-bright">
                   {item.name}
                 </Link>
@@ -129,6 +132,9 @@ function Recommendations({ items }: { items: ChatRecommendation[] }) {
                 <FamilyTag family={item.dominantFamily} />
                 {(item.owned || owned.has(item.id)) && <Tag tone="owned">Owned</Tag>}
                 {item.match !== undefined && <Tag>{item.match}% match</Tag>}
+              </div>
+              <div className="mt-2">
+                <PriceLine info={item} compact />
               </div>
             </div>
           </li>

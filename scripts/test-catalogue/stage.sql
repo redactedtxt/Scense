@@ -26,13 +26,15 @@ SELECT id FROM public.fragrances
     OR name = 'Myrrh & Tonka' OR name LIKE '%Stronger With You%' OR (brand = 'Creed' AND name = 'Aventus')
     OR name LIKE 'Hawas%'
 UNION
--- Brands the alias and accent tests search for: their two most voted bottles each.
+-- Brands the alias and accent tests search for, plus Tom Ford and Lattafa for the price
+-- tier tests ($$$ with a $$$$ Private Blend line, and $; DECISIONS B42): their two most
+-- voted bottles each.
 SELECT id FROM (
   SELECT id, row_number() OVER (PARTITION BY brand ORDER BY rating_votes DESC, id) AS n
     FROM public.fragrances
    WHERE brand IN ('Yves Saint Laurent', 'Jean Paul Gaultier', 'Maison Francis Kurkdjian',
                    'Dolce&Gabbana', 'Maison Martin Margiela', 'Chloé', 'Hermès', 'Lancôme',
-                   'Estée Lauder', 'Comme des Garcons')
+                   'Estée Lauder', 'Comme des Garcons', 'Tom Ford', 'Lattafa Perfumes')
 ) AS by_brand
  WHERE n <= 2;
 

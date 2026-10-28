@@ -7,7 +7,15 @@ import type { TasteProfile } from "./tasteProfile";
 export type Goal = "enhance" | "soften";
 export type Gender = "male" | "female" | "unisex";
 
-export type FragranceSummary = {
+// Price guidance (DECISIONS B42). The dataset has no prices: `price` is an approximate
+// tier for a 100 ml bottle in CAD with its band (no lower edge for $, no upper for $$$$),
+// and `value` is the community's value-for-money votes, null under 100 votes. Both are
+// null until the catalogue has them.
+export type Price = { tier: 1 | 2 | 3 | 4; minCad: number | null; maxCad: number | null };
+export type Value = { score: number; votes: number }; // score: 1 overpriced .. 5 great value
+export type PriceInfo = { price: Price | null; value: Value | null };
+
+export type FragranceSummary = PriceInfo & {
   id: number;
   slug: string;
   name: string;
@@ -29,12 +37,17 @@ export type FragranceList = {
   totalPages: number;
   // True when the search text matched nothing exactly and these are close matches.
   fuzzy: boolean;
+  // On a brand page, the brand as the catalogue spells it ("YSL" becomes "Yves Saint
+  // Laurent"); null otherwise.
+  brand: string | null;
 };
 
 // The Browse sort control's URL values. "popular" is the default and stays out of the URL.
 export type Sort = "popular" | "least-popular" | "highest-rated";
 
-export type NoteRef = { name: string; mapped: boolean };
+// A note in the pyramid: its Fragrantica icon (null when the dataset has none) and its
+// dominant family for the chip's tint (null for a note with no wheel profile).
+export type NoteRef = { name: string; mapped: boolean; imageUrl: string | null; family: string | null };
 export type Layer = "top" | "heart" | "base" | "flat";
 
 export type FragranceDetail = FragranceSummary & {
@@ -56,7 +69,7 @@ export type NotePairing = {
   results: { note: string; rank: number; score: number; dominantFamily: string }[];
 };
 
-export type PairingMatch = {
+export type PairingMatch = PriceInfo & {
   id: number;
   rank: number;
   score: number;
@@ -115,7 +128,7 @@ export type ImportItem = { fragranceId: number; status: CollectionStatus; addedA
 export type ImportResult = { imported: number; skipped: number; tasteProfile: "imported" | "kept" | "none" };
 
 // A bottle the server picked for the chat (M9). The model never names one.
-export type ChatRecommendation = {
+export type ChatRecommendation = PriceInfo & {
   id: number;
   slug: string;
   name: string;
@@ -140,13 +153,15 @@ export type ChatState = {
   conversations: ChatSummary[]; // most recently used first
 };
 
-export type ChatConversation = { conversation: ChatSummary; messages: ChatMessage[] };
+// `budget`: the budget this chat's picks lean toward, in tier symbols ("$ and $$"), or null.
+export type ChatConversation = { conversation: ChatSummary; messages: ChatMessage[]; budget: string | null };
 
 export type ChatReply = {
   conversation: ChatSummary; // the chat the message went to; new on a first message
   reply: string;
   profile: TasteProfile;
   recommendations: ChatRecommendation[];
+  budget: string | null; // the budget the picks lean toward, in tier symbols
   degraded: boolean; // the model's answer failed validation; the reply is an apology
   messagesUsed: number;
   messagesLimit: number;
@@ -154,7 +169,8 @@ export type ChatReply = {
 
 // --- the concierge (M10; DECISIONS B37) ---
 
-export type OutingSlotName = "occasion" | "time_of_day" | "season" | "setting" | "projection";
+// "budget" is optional and never asked about (DECISIONS B42); the others are required.
+export type OutingSlotName = "occasion" | "time_of_day" | "season" | "setting" | "projection" | "budget";
 
 // One of the outing's five slots as the server describes it: its label ("Date night",
 // "Fall"), or null while it's still missing.
@@ -174,7 +190,13 @@ export type ConciergeMessage = {
 // The concierge's own budget (separate from the chat's) and the visitor's outings.
 export type ConciergeState = ChatState;
 
-export type ConciergeOuting = { conversation: ChatSummary; outing: OutingSlot[]; messages: ConciergeMessage[] };
+// `beyondOwn`: the visitor asked for bottles they don't own, so picks skip the Own list.
+export type ConciergeOuting = {
+  conversation: ChatSummary;
+  outing: OutingSlot[];
+  beyondOwn: boolean;
+  messages: ConciergeMessage[];
+};
 
 export type ConciergeReply = {
   conversation: ChatSummary; // the outing the message went to; new on a first message
@@ -182,6 +204,7 @@ export type ConciergeReply = {
   options: string[];
   picks: ConciergePick[];
   outing: OutingSlot[];
+  beyondOwn: boolean;
   degraded: boolean;
   messagesUsed: number;
   messagesLimit: number;
@@ -230,7 +253,7 @@ function query(params: Record<string, string | number | undefined>): string {
 }
 
 export const api = {
-  fragrances: (params: { q?: string; gender?: string; family?: string; sort?: string; page?: number }) =>
+  fragrances: (params: { q?: string; gender?: string; family?: string; brand?: string; sort?: string; page?: number }) =>
     request<FragranceList>(`/fragrances${query(params)}`),
 
   fragrance: (slug: string) => request<FragranceDetail>(`/fragrances/${encodeURIComponent(slug)}`),
