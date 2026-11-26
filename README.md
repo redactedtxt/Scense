@@ -59,8 +59,12 @@ flowchart LR
 ## How the AI stays safe and cheap
 
 - **The model never names a fragrance.** It only turns words into weights ("stings the nose" → spicy). The server scores the catalogue and picks every bottle. In the concierge, the model never even sees a bottle's name, only its facts. Before any reply is shown, the server checks it, and replaces any reply that names a catalogue bottle or brand, holds a link, or wanders off topic.
-- **Server-side caps.** Each visitor gets 8 messages per feature per day, claimed in one atomic SQL statement *before* the model is called, so two quick messages can't both be the 8th. A site-wide cap allows 100 guests a day. Every call is limited to 400 output tokens and the last 8 messages of history.
+- **Server-side caps.** Each visitor gets 8 messages per feature per day, claimed in one atomic SQL statement *before* the model is called, so two quick messages can't both be the 8th. A site-wide cap allows 100 guests a day, and one network address can bring at most 5 of them. Every call is limited to 400 output tokens and the last 8 messages of history.
 - **Cost.** An 8-message chat is about 15,000 input and 1,600 output tokens, roughly **$0.002**. The worst case, with every message at the length limit and every call retried, is under a cent. Tests and CI use a fake model and never call Anthropic.
+
+## Security
+
+[SECURITY.md](SECURITY.md) sets out the threat model, the defences for each threat, and how to report a vulnerability privately.
 
 ## Run it locally
 

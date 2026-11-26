@@ -503,3 +503,48 @@ describe("POST /api/chat: budgets and prices (DECISIONS B42)", () => {
     expect(res.body.reply).not.toMatch(/\$\d/);
   });
 });
+
+// Security audit regressions (DECISIONS B43).
+describe("POST /api/chat: refused before any cost (B43)", () => {
+  it("refuses a NUL character before claiming a message or calling the model", async () => {
+    const { llm, requests } = fakeLlm([modelJson()]);
+    const { app, calls } = appWith(chatRoutes({ reserve: firstSlot }), undefined, aiWith(llm));
+    const res = await send(app, { message: "warm woods\u0000" });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("invalid_request");
+    expect(requests).toHaveLength(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("refuses an owned id larger than any database id", async () => {
+    const { llm, requests } = fakeLlm([modelJson()]);
+    const { app } = appWith(chatRoutes({ reserve: firstSlot }), undefined, aiWith(llm));
+    const res = await send(app, { message: "warm woods", owned: [2_147_483_648] });
+    expect(res.status).toBe(400);
+    expect(requests).toHaveLength(0);
+  });
+
+  it("lets one address bring only so many guest ids a day, and never counts users", async () => {
+    const guests = Array.from({ length: 4 }, (_, i) => `0b6f2c1e-4d2a-4c7e-9a51-2f1d3c4b5a6${i}`);
+    const { llm, requests } = fakeLlm(Array.from({ length: 10 }, () => modelJson()));
+    const { app } = appWith(chatRoutes({ reserve: firstSlot }), undefined, aiWith(llm, { guestIdsPerIpPerDay: 3 }));
+    // Express trusts one proxy hop, so X-Forwarded-For stands in for Caddy's address.
+    const from = (ip: string, guest: string | null) =>
+      (guest ? request(app).post("/api/chat").set("X-Guest-Id", guest) : request(app).post("/api/chat"))
+        .set("X-Forwarded-For", ip)
+        .send({ message: "warm woods" });
+
+    for (const guest of guests.slice(0, 3)) expect((await from("203.0.113.5", guest)).status).toBe(200);
+    const fourth = await from("203.0.113.5", guests[3]!);
+    expect(fourth.status).toBe(429);
+    expect(fourth.body.error.code).toBe("guest_ip_limit");
+    expect(requests).toHaveLength(3); // refused before the model
+    // A guest already let in keeps going; another address has its own count.
+    expect((await from("203.0.113.5", guests[0]!)).status).toBe(200);
+    expect((await from("198.51.100.7", guests[3]!)).status).toBe(200);
+    // A signed-in user from the same full address is not a guest and is not counted.
+    const cookie = `scense_session=${await signSession(7, auth.jwtSecret, 7)}`;
+    const user = await request(app).post("/api/chat").set("Cookie", cookie).set("X-Forwarded-For", "203.0.113.5").send({ message: "warm woods" });
+    expect(user.status).toBe(200);
+  });
+});

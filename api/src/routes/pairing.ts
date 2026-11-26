@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { Db } from "../db.js";
 import { ApiError } from "../middleware/errors.js";
-import { parseInput } from "../middleware/validate.js";
+import { dbId, parseInput } from "../middleware/validate.js";
 import { priceOf, valueOf, type PriceSettings } from "../services/price.js";
 import { GOALS, rankNotes, type Matrices, type NoteProfile } from "../services/scoring.js";
 import { dominantFamilyId } from "../services/sql.js";
@@ -19,7 +19,8 @@ const notesBody = z.object({
 });
 
 // "owned" arrives as "3,17,42". A bad id is a 400, not a silently ignored one.
-const wholeId = z.string().regex(/^[1-9]\d*$/, "must be a comma-separated list of ids").transform(Number);
+// Larger than any database id is refused too (dbId), or Postgres would fail the query.
+const wholeId = z.string().regex(/^[1-9]\d*$/, "must be a comma-separated list of ids").transform(Number).pipe(dbId);
 const ownedIds = z
   .string()
   .default("")

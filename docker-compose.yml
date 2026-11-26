@@ -1,5 +1,9 @@
 # Local development: Postgres, the API with hot reload, and Vite.
 # The password default below is for local dev only; production uses a real secret.
+#
+# Every port listens on this machine only (127.0.0.1), so nobody else on the network can
+# reach the dev database with its default password (DECISIONS B43). To open the site
+# from a phone on the same Wi-Fi, start it with DEV_BIND=0.0.0.0 for that session.
 services:
   db:
     image: postgres:16
@@ -8,7 +12,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scense_dev}
       POSTGRES_DB: scense
     ports:
-      - "5432:5432"
+      - "${DEV_BIND:-127.0.0.1}:5432:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
     # The API waits for this, so it never starts before the database accepts connections.
@@ -41,7 +45,7 @@ services:
       # Same reason as web below: `tsx watch` uses chokidar, which reads this and polls.
       CHOKIDAR_USEPOLLING: "true"
     ports:
-      - "3000:3000"
+      - "${DEV_BIND:-127.0.0.1}:3000:3000"
     volumes:
       - ./api:/app
       - ./db:/db
@@ -61,7 +65,7 @@ services:
       # Bind mounts on Windows/macOS don't send file events, so Vite must poll.
       CHOKIDAR_USEPOLLING: "true"
     ports:
-      - "5173:5173"
+      - "${DEV_BIND:-127.0.0.1}:5173:5173"
     volumes:
       - ./web:/app
       - /app/node_modules

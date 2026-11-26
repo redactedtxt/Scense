@@ -61,6 +61,10 @@ const aiSchema = z.object({
   // guest's new chats never take another slot (DECISIONS B36). The name predates that and
   // is kept so the GitHub secret and server .env need no change.
   GUEST_DAILY_CONVERSATION_CAP: count(100),
+  // Different guest ids one address may bring to the AI features per Toronto day, so one
+  // script cannot mint fresh ids and use up the guest cap for everyone (DECISIONS B43).
+  // 0 turns it off. Signed-in users are not counted.
+  GUEST_IDS_PER_IP_PER_DAY: count(5),
   // US dollars per million tokens, for the admin report's cost estimate only.
   // claude-haiku-5-5 list prices on 2026-10-21 (prompts up to 100K tokens).
   LLM_INPUT_USD_PER_MTOK: price(0.1),
@@ -155,6 +159,7 @@ export type AiSettings = {
   conciergeQuestionMaxWords: number;
   conciergeReasonMaxWords: number;
   guestDailyConversationCap: number;
+  guestIdsPerIpPerDay: number;
   inputUsdPerMTok: number;
   outputUsdPerMTok: number;
   adminToken: string;
@@ -186,6 +191,7 @@ export function aiSettings(config: z.infer<typeof aiSchema>): AiSettings {
     conciergeQuestionMaxWords: config.CONCIERGE_QUESTION_MAX_WORDS,
     conciergeReasonMaxWords: config.CONCIERGE_REASON_MAX_WORDS,
     guestDailyConversationCap: config.GUEST_DAILY_CONVERSATION_CAP,
+    guestIdsPerIpPerDay: config.GUEST_IDS_PER_IP_PER_DAY,
     inputUsdPerMTok: config.LLM_INPUT_USD_PER_MTOK,
     outputUsdPerMTok: config.LLM_OUTPUT_USD_PER_MTOK,
     adminToken: config.ADMIN_TOKEN.trim(),

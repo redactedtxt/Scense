@@ -25,14 +25,14 @@ jobs:
       contents: read
       packages: write # push images to GitHub Container Registry
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Set image names
         # Registry names must be lowercase; the commit SHA tags every image, so a
         # deploy always runs exactly the code that passed CI.
         run: |
           echo "IMAGE_PREFIX=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/scense" >> "$GITHUB_ENV"
           echo "IMAGE_TAG=${GITHUB_SHA}" >> "$GITHUB_ENV"
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -51,10 +51,9 @@ jobs:
       contents: read
       packages: read # the server pulls with this job's short-lived token
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Copy the compose file to the server
-        uses: appleboy/scp-action@v1.0.0
+        uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
@@ -63,7 +62,7 @@ jobs:
           target: /opt/scense
 
       - name: Write .env, pull images, migrate, restart
-        uses: appleboy/ssh-action@v1.2.5
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         env:
           IMAGE_OWNER: ${{ github.repository_owner }}
           IMAGE_TAG: ${{ github.sha }}
@@ -113,15 +112,53 @@ jobs:
             } > .env
 
             # The images are private, so log in with this job's token (it expires
-            # when the job ends) and log out again after pulling.
+            # when the job ends) and log out again after pulling. The trap logs out
+            # even when the pull fails and `set -e` stops the script (B43).
+            trap 'docker logout ghcr.io > /dev/null 2>&1 || true' EXIT
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             docker compose -f docker-compose.prod.yml pull
             docker logout ghcr.io
+
+            # Only the backup container may reach the EC2 metadata service, which hands
+            # out the instance role's credentials (DECISIONS B43). One firewall rule
+            # drops traffic from the app network (caddy, api, db; its subnet is fixed in
+            # docker-compose.prod.yml) to 169.254.169.254. A systemd unit puts the rule
+            # back after a reboot or a Docker restart; installing it again is harmless.
+            sudo tee /etc/systemd/system/scense-imds-block.service > /dev/null <<'UNIT'
+            [Unit]
+            Description=Block the EC2 metadata service for Scense app containers (DECISIONS B43)
+            After=docker.service
+            Requires=docker.service
+            PartOf=docker.service
+
+            [Service]
+            Type=oneshot
+            RemainAfterExit=yes
+            ExecStart=/bin/sh -c 'iptables -C DOCKER-USER -s 172.30.0.0/24 -d 169.254.169.254 -j DROP 2>/dev/null || iptables -I DOCKER-USER -s 172.30.0.0/24 -d 169.254.169.254 -j DROP'
+
+            [Install]
+            WantedBy=multi-user.target
+            UNIT
+            sudo systemctl daemon-reload
+            sudo systemctl enable scense-imds-block.service > /dev/null 2>&1
+            sudo systemctl restart scense-imds-block.service
 
             # Migrate before the new API starts, so new code never meets an old schema.
             docker compose -f docker-compose.prod.yml up -d --wait db
             docker compose -f docker-compose.prod.yml run --rm --no-deps api npm run migrate
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            # Prove the metadata rule works: the API container can't get a token, and the
+            # backup container still has its credentials. Nothing is printed, because
+            # this repository's Actions logs are public.
+            if docker compose -f docker-compose.prod.yml exec -T api node -e "fetch('http://169.254.169.254/latest/api/token', { method: 'PUT', headers: { 'X-aws-ec2-metadata-token-ttl-seconds': '5' }, signal: AbortSignal.timeout(3000) }).then(() => process.exit(0), () => process.exit(1))"; then
+              echo "The API container can reach the EC2 metadata service; the block is not working."
+              exit 1
+            fi
+            if ! docker compose -f docker-compose.prod.yml exec -T backup aws sts get-caller-identity > /dev/null 2>&1; then
+              echo "The backup container can no longer get AWS credentials."
+              exit 1
+            fi
 
             # Old images pile up with one set per deploy; keep the disk clean.
             docker image prune -af --filter "until=72h"

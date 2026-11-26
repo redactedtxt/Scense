@@ -5,7 +5,7 @@ import type { Db } from "../db.js";
 import { requireUser, userIdOf } from "../middleware/auth.js";
 import { ApiError } from "../middleware/errors.js";
 import { byUser, createLimiter, rateLimit } from "../middleware/rateLimit.js";
-import { parseInput } from "../middleware/validate.js";
+import { dbIdParam, parseInput } from "../middleware/validate.js";
 
 // Pair ratings (SPEC section 7, M8): how well a layering pair worked for one user, for
 // one goal. Stored only. Nothing reads them into a score (decision 11); they are the
@@ -13,7 +13,7 @@ import { parseInput } from "../middleware/validate.js";
 // and goal (the table's primary key), so rating again replaces the old one.
 
 const GOALS = ["enhance", "soften"] as const;
-const id = z.coerce.number().int().positive();
+const id = dbIdParam;
 
 const putBody = z
   .object({ baseId: id, partnerId: id, goal: z.enum(GOALS), stars: z.number().int().min(1).max(5) })

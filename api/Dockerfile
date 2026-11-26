@@ -15,9 +15,20 @@ COPY pipeline/config/scoring.yaml pipeline/config/occasions.yaml /pipeline/confi
 EXPOSE 3000
 CMD ["npm", "run", "dev"]
 
-# Runtime image (CI and production). Production mounts nothing, so the migrations
-# ride along in the image at the path `npm run migrate` expects (../db/migrations).
-FROM dev AS prod
+# Runtime image (CI and production), built fresh rather than from the dev image
+# (DECISIONS B43): production dependencies only (tsx runs the TypeScript, node-pg-migrate
+# the migrations, so both are dependencies), and it runs as the unprivileged `node` user
+# instead of root, so a bug in the API can't write to its own code or the image.
+# Production mounts nothing, so the migrations ride along in the image at the path
+# `npm run migrate` expects (../db/migrations).
+FROM node:24-alpine AS prod
 ENV NODE_ENV=production
+WORKDIR /app
+COPY api/package.json api/package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY api/ .
+COPY pipeline/config/scoring.yaml pipeline/config/occasions.yaml /pipeline/config/
 COPY db/migrations /db/migrations
+USER node
+EXPOSE 3000
 CMD ["npm", "start"]

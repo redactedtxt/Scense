@@ -5,6 +5,7 @@ import helmet from "helmet";
 import { aiDefaults, type AiSettings, type AuthSettings } from "./config.js";
 import type { Db } from "./db.js";
 import { errorHandler, notFoundHandler } from "./middleware/errors.js";
+import { rejectNul } from "./middleware/input.js";
 import { adminRouter } from "./routes/admin.js";
 import { authRouter } from "./routes/auth.js";
 import { chatRouter } from "./routes/chat.js";
@@ -20,6 +21,7 @@ import { profileRouter } from "./routes/profile.js";
 import { reviewsRouter } from "./routes/reviews.js";
 import type { CatalogueSettings } from "./services/catalogue.js";
 import { createCatalogueCache } from "./services/catalogueCache.js";
+import { createGuestIpLimit } from "./services/guestIps.js";
 import type { Llm } from "./services/llm.js";
 import type { ConciergeSettings } from "./services/occasions.js";
 import type { Matrices } from "./services/scoring.js";
@@ -51,6 +53,7 @@ export function createApp(
   app.use(cors({ origin: auth.corsOrigins, credentials: true }));
   // 200 kB fits a guest import of the whole catalogue (2,000 items) with room to spare.
   app.use(express.json({ limit: "200kb" }));
+  app.use(rejectNul);
   app.use(cookieParser());
   app.use("/api", healthRouter(db));
   app.use("/api", familiesRouter(db));
@@ -63,17 +66,21 @@ export function createApp(
   app.use("/api", pairRatingsRouter(db, auth, now));
   app.use("/api", profileRouter(db, auth));
   const catalogue = createCatalogueCache(db, settings.price, now);
+  // One count for both features, so a guest who chats and plans an outing counts once.
+  const guestIps = createGuestIpLimit(ai.settings.guestIdsPerIpPerDay);
   app.use(
     "/api",
     chatRouter({
-      db, auth, ai: ai.settings, llm: ai.llm, catalogue,
+      db, auth, ai: ai.settings, llm: ai.llm, catalogue, guestIps,
       fuzzyMinSimilarity: settings.fuzzyMinSimilarity, price: settings.price, now,
     }),
   );
   if (ai.concierge) {
     app.use(
       "/api",
-      conciergeRouter({ db, auth, ai: ai.settings, llm: ai.llm, catalogue, concierge: ai.concierge, price: settings.price, now }),
+      conciergeRouter({
+        db, auth, ai: ai.settings, llm: ai.llm, catalogue, guestIps, concierge: ai.concierge, price: settings.price, now,
+      }),
     );
   }
   app.use("/api", adminRouter(db, ai.settings, now));

@@ -1,5 +1,35 @@
+# Production web server: TLS, the web build, and /api proxied to the API container.
+# Security headers and the TLS floor are explained in DECISIONS B43.
+
+# Every response, web app and API alike. The API's helmet sets most of these too; Caddy
+# replaces them so there is one list, and the web app (which had none) gets them.
+(security_headers) {
+	header {
+		# Scripts, styles, and fonts only from this site (the fonts are self-hosted);
+		# bottle and note photos are hotlinked from Fragrantica's image host (B19).
+		# style-src-attr allows React's style={...} attributes, never <style> or scripts.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; font-src 'self'; img-src 'self' data: https://fimgs.net; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		# Don't advertise the server software. `defer` applies these after the proxy, so
+		# they also overwrite what the API sent.
+		-Server
+		-Via
+		defer
+	}
+}
+
 scense.name {
+	# TLS 1.2 and 1.3 only (Caddy's default today, written down so it can't drift).
+	tls {
+		protocols tls1.2 tls1.3
+	}
 	encode gzip
+	import security_headers
 	handle /api/* {
 		reverse_proxy api:3000
 	}
@@ -11,5 +41,9 @@ scense.name {
 }
 
 www.scense.name {
+	tls {
+		protocols tls1.2 tls1.3
+	}
+	import security_headers
 	redir https://scense.name{uri} permanent
 }
