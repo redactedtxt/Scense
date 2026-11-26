@@ -36,6 +36,7 @@ services:
       - caddy-config:/config
     depends_on:
       - api
+    networks: [app]
     logging: *logging
 
   api:
@@ -58,6 +59,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    networks: [app]
     logging: *logging
 
   db:
@@ -76,6 +78,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    # On both networks: the API reaches it on app, the backup job on backup.
+    networks: [app, backup]
     logging: *logging
 
   backup:
@@ -98,7 +102,26 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # The only container that may reach the metadata service (see networks below).
+    networks: [backup]
     logging: *logging
+
+# Two networks with fixed address ranges, so the host firewall can tell them apart
+# (DECISIONS B43). The metadata hop limit is 2 so the backup container can fetch the
+# instance role's credentials, and that would let ANY container fetch them: an SSRF bug in
+# the API would then hand out a role that can read every backup. The deploy installs one
+# rule, "DROP from 172.30.0.0/24 to 169.254.169.254", so caddy, api, and db (on app)
+# can't reach the metadata service, and backup (on backup) still can. Change a subnet
+# here and the rule in deploy.yml must change with it (a test checks they match).
+networks:
+  app:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  backup:
+    ipam:
+      config:
+        - subnet: 172.30.1.0/24
 
 volumes:
   db-data:

@@ -5,10 +5,11 @@ import type { AiSettings, AuthSettings } from "../config.js";
 import type { Db } from "../db.js";
 import { optionalUser } from "../middleware/auth.js";
 import { ApiError } from "../middleware/errors.js";
-import { requireSubject } from "../middleware/guest.js";
-import { parseInput } from "../middleware/validate.js";
+import { admitGuest, requireSubject } from "../middleware/guest.js";
+import { dbId, parseInput } from "../middleware/validate.js";
 import { addTokens, refundMessage, reserveMessage, todaysUsage, torontoDay } from "../services/caps.js";
 import type { CatalogueCache, CatalogueSnapshot } from "../services/catalogueCache.js";
+import type { GuestIpLimit } from "../services/guestIps.js";
 import { askJson, type Tokens } from "../services/chat.js";
 import {
   afterPicksChips,
@@ -69,6 +70,8 @@ export type ConciergeDeps = {
   ai: AiSettings;
   llm: Llm | null; // null when no API key is configured
   catalogue: CatalogueCache;
+  // New guest ids per network address per day, shared with the other AI feature (B43).
+  guestIps: GuestIpLimit;
   concierge: ConciergeSettings;
   // scoring.yaml's price section: how a budget pulls catalogue picks (DECISIONS B42).
   price: PriceSettings;
@@ -104,7 +107,7 @@ export function conciergeRouter(deps: ConciergeDeps): Router {
     conversationId: outingId.optional(),
     // Guests only (SPEC section 6): their profile and Own list live in the browser.
     tasteProfile: profileInput.nullable().optional(),
-    owned: z.array(z.number().int().positive()).max(2000).optional(),
+    owned: z.array(dbId).max(2000).optional(),
   });
   // One message at a time per visitor, so two answers can't race on one outing's slots.
   const busy = new Set<string>();
@@ -139,6 +142,7 @@ export function conciergeRouter(deps: ConciergeDeps): Router {
     const body = parseInput(postBody, req.body);
     const subject = requireSubject(req, res);
     if (deps.llm === null) throw UNAVAILABLE;
+    admitGuest(req, subject, deps.guestIps, torontoDay(deps.now()));
     if (busy.has(subject)) throw new ApiError(409, "concierge_busy", "Wait for the reply to your last message.");
     busy.add(subject);
     try {

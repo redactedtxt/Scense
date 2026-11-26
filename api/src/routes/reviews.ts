@@ -5,7 +5,7 @@ import type { Db } from "../db.js";
 import { optionalUser, requireUser, userIdOf } from "../middleware/auth.js";
 import { ApiError } from "../middleware/errors.js";
 import { byUser, createLimiter, rateLimit } from "../middleware/rateLimit.js";
-import { parseInput } from "../middleware/validate.js";
+import { dbIdParam, parseInput } from "../middleware/validate.js";
 
 // Written reviews (SPEC section 7, M8). Anyone can read them; only a signed-in user can
 // write, and only one per fragrance (the table's UNIQUE (user_id, fragrance_id)). PUT and
@@ -18,7 +18,7 @@ import { parseInput } from "../middleware/validate.js";
 export const REVIEWS_PAGE_SIZE = 10;
 export const MAX_REVIEW_CHARS = 2000;
 
-const idParams = z.object({ fragranceId: z.coerce.number().int().positive() });
+const idParams = z.object({ fragranceId: dbIdParam });
 const listQuery = z.object({ page: z.coerce.number().int().min(1).max(10_000).default(1) });
 
 // Postgres's char_length counts characters (code points); JavaScript's .length counts

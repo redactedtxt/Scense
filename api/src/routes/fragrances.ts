@@ -5,7 +5,7 @@ import { ApiError } from "../middleware/errors.js";
 import { parseInput } from "../middleware/validate.js";
 import { orderByClause, SORTS, type CatalogueSettings } from "../services/catalogue.js";
 import { priceOf, valueOf, type PriceSettings } from "../services/price.js";
-import { FUZZY_MATCHED, searchWords, toPrefixQuery } from "../services/search.js";
+import { FUZZY_MATCHED, prefixQuery, searchWords } from "../services/search.js";
 import { dominantFamilyId } from "../services/sql.js";
 
 export const PAGE_SIZE = 24;
@@ -74,7 +74,7 @@ export function fragrancesRouter(db: Db, settings: CatalogueSettings): Router {
     const query = parseInput(listQuery, req.query);
     const familyId = query.family ? await findFamilyId(db, query.family) : null;
     const brand = query.brand ? await findBrand(db, query.brand) : null;
-    const tsquery = toPrefixQuery(query.q);
+    const tsquery = await prefixQuery(db, query.q);
     const filters = [tsquery, query.gender ?? null, familyId, brand];
     const offset = (query.page - 1) * PAGE_SIZE;
     let list = await exactList(db, filters, orderByClause(query.sort, settings), offset);
@@ -154,7 +154,7 @@ type Rows = Record<string, unknown>[];
 async function exactList(db: Db, filters: unknown[], order: string, offset: number) {
   const from = `FROM fragrances f
          JOIN families fam ON fam.id = ${dominantFamilyId("f.profile")}
-        WHERE ($1::text IS NULL OR f.search_vector @@ to_tsquery('simple', unaccent($1)))
+        WHERE ($1::text IS NULL OR f.search_vector @@ to_tsquery('simple', $1))
           AND ($2::text IS NULL OR f.gender = $2)
           AND ($3::int IS NULL OR fam.id = $3)
           AND ($4::text IS NULL OR f.brand = $4)`;
@@ -170,7 +170,7 @@ async function exactList(db: Db, filters: unknown[], order: string, offset: numb
 // empty list means the filters excluded everything, and a typo search would be wrong.
 async function anyTextMatch(db: Db, tsquery: string): Promise<boolean> {
   const { rows } = await db.query(
-    "SELECT EXISTS (SELECT 1 FROM fragrances f WHERE f.search_vector @@ to_tsquery('simple', unaccent($1))) AS found",
+    "SELECT EXISTS (SELECT 1 FROM fragrances f WHERE f.search_vector @@ to_tsquery('simple', $1)) AS found",
     [tsquery],
   );
   return rows[0].found === true;

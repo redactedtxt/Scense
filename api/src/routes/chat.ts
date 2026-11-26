@@ -5,8 +5,8 @@ import type { AiSettings, AuthSettings } from "../config.js";
 import type { Db } from "../db.js";
 import { optionalUser } from "../middleware/auth.js";
 import { ApiError } from "../middleware/errors.js";
-import { requireSubject } from "../middleware/guest.js";
-import { parseInput } from "../middleware/validate.js";
+import { admitGuest, requireSubject } from "../middleware/guest.js";
+import { dbId, parseInput } from "../middleware/validate.js";
 import { addTokens, refundMessage, reserveMessage, todaysUsage, torontoDay } from "../services/caps.js";
 import {
   deleteConversation,
@@ -18,6 +18,7 @@ import {
   type ConversationSummary,
 } from "../services/conversations.js";
 import type { CatalogueCache, CatalogueSnapshot } from "../services/catalogueCache.js";
+import type { GuestIpLimit } from "../services/guestIps.js";
 import { askModel, budgetFrom, budgetNote, composeTurn, CONFUSED_REPLY, finishReply, type Turn } from "../services/chat.js";
 import type { Llm } from "../services/llm.js";
 import { matchNamedBottles, namedBottlesNote, namedBottlesUpdate, type NamedBottles } from "../services/namedBottles.js";
@@ -40,6 +41,8 @@ export type ChatDeps = {
   ai: AiSettings;
   llm: Llm | null; // null when no API key is configured
   catalogue: CatalogueCache;
+  // New guest ids per network address per day, shared with the other AI feature (B43).
+  guestIps: GuestIpLimit;
   // The typo search's threshold (scoring.yaml), for looking up bottles a visitor names.
   fuzzyMinSimilarity: number;
   // scoring.yaml's price section: what a stated budget does to the picks (DECISIONS B42).
@@ -73,7 +76,7 @@ export function chatRouter(deps: ChatDeps): Router {
     // Guests only: their profile and Own list live in the browser (SPEC section 6).
     // A signed-in user's come from the database and these are ignored.
     tasteProfile: profileInput.nullable().optional(),
-    owned: z.array(z.number().int().positive()).max(2000).optional(),
+    owned: z.array(dbId).max(2000).optional(),
   });
   // One message at a time per visitor, not per chat. A second one sent before the first
   // is answered would read the same taste profile, which every chat shares, and one of
@@ -112,6 +115,7 @@ export function chatRouter(deps: ChatDeps): Router {
     const body = parseInput(postBody, req.body);
     const subject = requireSubject(req, res);
     if (deps.llm === null) throw UNAVAILABLE;
+    admitGuest(req, subject, deps.guestIps, torontoDay(deps.now()));
     if (busy.has(subject)) throw new ApiError(409, "chat_busy", "Wait for the reply to your last message.");
     busy.add(subject);
     try {

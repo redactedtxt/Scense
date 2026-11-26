@@ -410,5 +410,5 @@ All of these are recorded in DECISIONS.md B22.
 - **SSH port 22 open to anywhere, key-only.** GitHub-hosted runners have no fixed IPs. Revisit if the logs show trouble (fail2ban, or a self-hosted runner).
 - **Separate deploy key** from the admin key, so either can be revoked alone.
 - **GitHub secrets are the single source of truth.** The deploy job writes `/opt/scense/.env` from them on every deploy (mode 600), so you never edit a `.env` on the server by hand.
-- **Metadata hop limit 2** so the backup container can use the instance role.
+- **Metadata hop limit 2** so the backup container can use the instance role. That would let every container reach the role's credentials, so each deploy installs a systemd unit, `scense-imds-block.service`, whose firewall rule drops traffic from the app network (caddy, api, db) to `169.254.169.254`, then checks that the API can't reach it and the backup job still can (DECISIONS B43). Check it by hand with `sudo iptables -S DOCKER-USER`.
 - **Ubuntu 24.04 LTS, Standard CPU credits, encrypted 20 GB gp3 root volume, termination protection on.**

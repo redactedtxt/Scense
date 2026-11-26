@@ -17,8 +17,8 @@ function usersApp(now?: () => number) {
     [
       [/INSERT INTO users/, (params) => {
         const [email, display_name, password_hash] = params as string[];
-        // Postgres would raise this for the UNIQUE (citext) email column.
-        if (byEmail(email).length) throw Object.assign(new Error("duplicate"), { code: "23505" });
+        // ON CONFLICT (email) DO NOTHING on the UNIQUE (citext) column: no row comes back.
+        if (byEmail(email).length) return [];
         const user = { id: users.length + 1, email: email!, display_name: display_name!, password_hash: password_hash! };
         users.push(user);
         return [user];

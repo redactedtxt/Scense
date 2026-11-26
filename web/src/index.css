@@ -1,4 +1,6 @@
-@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Inter:wght@400;500;600&display=swap");
+/* The fonts are self-hosted (main.tsx imports them from @fontsource), so no visitor
+   request goes to Google and the CSP can keep font-src and style-src to this site
+   (DECISIONS B43). Same families and weights as the Google Fonts link they replace. */
 @import "tailwindcss";
 
 /*

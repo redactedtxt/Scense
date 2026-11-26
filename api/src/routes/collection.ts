@@ -4,7 +4,7 @@ import type { AuthSettings } from "../config.js";
 import type { Db } from "../db.js";
 import { requireUser, userIdOf } from "../middleware/auth.js";
 import { ApiError } from "../middleware/errors.js";
-import { parseInput } from "../middleware/validate.js";
+import { dbId, dbIdParam, parseInput } from "../middleware/validate.js";
 import { importProfile } from "../services/profileStore.js";
 import { dominantFamilyId } from "../services/sql.js";
 import { completeProfile, profileInput } from "../services/taste.js";
@@ -17,13 +17,13 @@ const STATUSES = ["own", "want"] as const;
 // More ids than the catalogue holds would mean a broken client, not a big collection.
 const MAX_IMPORT = 2000;
 
-const idParams = z.object({ fragranceId: z.coerce.number().int().positive() });
+const idParams = z.object({ fragranceId: dbIdParam });
 const putBody = z.object({ status: z.enum(STATUSES) });
 const importBody = z.object({
   items: z
     .array(
       z.object({
-        fragranceId: z.number().int().positive(),
+        fragranceId: dbId,
         status: z.enum(STATUSES),
         // The time the guest saved it, so /me keeps the guest's newest-first order.
         addedAt: z.iso.datetime().optional(),

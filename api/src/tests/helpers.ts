@@ -30,6 +30,9 @@ export function fakeDb(routes: Route[]) {
   const db = {
     query: async (sql: string, params: unknown[] = []) => {
       calls.push({ sql, params });
+      // Search folds accents in Postgres before building a tsquery (search.ts,
+      // prefixQuery). The fake has no unaccent rules, so it hands the text back as is.
+      if (sql === "SELECT unaccent($1) AS folded") return { rows: [{ folded: params[0] }] };
       const route = routes.find(([match]) => match.test(sql));
       if (!route) throw new Error(`fakeDb: no route for SQL: ${sql}`);
       const rows = typeof route[1] === "function" ? route[1](params) : route[1];

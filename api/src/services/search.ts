@@ -13,8 +13,8 @@ const MAX_FUZZY_WORDS = 6;
 // puts the alias into the vector as the same adjacent words, and a phrase keeps "d&g"
 // from matching every bottle that merely has a D word and a G word somewhere. Inside a
 // phrase a one-letter word must match exactly, or "d:*" would match "di" in "Acqua di Giò".
-// 'simple' must match the config load.py used to build search_vector, and the SQL
-// unaccents this text because load.py unaccented the vector.
+// 'simple' must match the config load.py used to build search_vector, and the text must
+// be unaccented first because load.py unaccented the vector: call prefixQuery, not this.
 export function toPrefixQuery(text: string): string | null {
   const chunks = text.split(/\s+/).map((chunk) => chunk.match(WORD)).filter((words) => words !== null);
   if (chunks.length === 0) return null;
@@ -24,6 +24,19 @@ export function toPrefixQuery(text: string): string | null {
     return inPhrase ? `(${phrase})` : phrase;
   });
   return terms.join(" & ");
+}
+
+// The tsquery for what a visitor typed, accents folded first (DECISIONS B43). load.py
+// built search_vector with Postgres's unaccent, so the typed text must be folded by the
+// same rules, and that has to happen BEFORE toPrefixQuery: unaccent turns some letters
+// into punctuation ("ŉ" becomes "'n", "⑴" becomes "(1)"), and folding the finished query
+// put that punctuation into tsquery syntax, a 500 for anyone who typed "ŉ". Folded first,
+// toPrefixQuery's letters-and-digits filter drops it like any other punctuation.
+// Costs one tiny query; text with no words skips it.
+export async function prefixQuery(db: Db, text: string): Promise<string | null> {
+  if (toPrefixQuery(text) === null) return null;
+  const { rows } = await db.query("SELECT unaccent($1) AS folded", [text]);
+  return toPrefixQuery(rows[0].folded as string);
 }
 
 // The words the typo fallback compares against the catalogue's words. One-letter words
@@ -64,11 +77,11 @@ function withoutConnectors(text: string): string {
 // most voted bottle, so "aventus" is Aventus, not one of its flankers.
 export async function bestMatch(db: Db, text: string, fuzzyMinSimilarity: number): Promise<number | null> {
   for (const candidate of [text, withoutConnectors(text)]) {
-    const tsquery = toPrefixQuery(candidate);
+    const tsquery = await prefixQuery(db, candidate);
     if (tsquery === null) continue;
     const { rows } = await db.query(
       `SELECT f.id FROM fragrances f
-        WHERE f.search_vector @@ to_tsquery('simple', unaccent($1))
+        WHERE f.search_vector @@ to_tsquery('simple', $1)
         ORDER BY f.rating_votes DESC NULLS LAST, f.id LIMIT 1`,
       [tsquery],
     );

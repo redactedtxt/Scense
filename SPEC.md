@@ -586,6 +586,7 @@ As built (M10; DECISIONS B37):
 
 - Each subject (`user:<id>` or `guest:<uuid>`) gets **8 user messages per feature per day**, one shared budget across all of that feature's chats. New chats are free; messages are what count. The day resets at midnight America/Toronto. The counter reads "X of 8 messages used today" whichever chat is open. The slot is claimed atomically before the model is called, so two quick messages, in the same chat or in two chats, can't both become message 8 (DECISIONS B36).
 - Site-wide backstop: `GUEST_DAILY_CONVERSATION_CAP` (default 100) **distinct guests** per day across both features. A guest already counted today never takes a second slot, however many chats they open. (The variable's name predates this and is kept so the secret needs no change.) Over the cap, guests see "Today's guest demos are used up. Sign up or come back tomorrow."
+- Per address (DECISIONS B43): one network address may bring at most `GUEST_IDS_PER_IP_PER_DAY` (default 5) different guest ids to the AI features per Toronto day, so a script can't mint fresh ids to use up the site-wide cap. Over it, the guest sees a 429 `guest_ip_limit` asking them to sign up or come back tomorrow. Signed-in users are not counted.
 - `max_tokens` 400 per call. Trim conversation history to the last 8 turns.
 - Log tokens in `llm_usage`. Add `GET /api/admin/usage` behind an `ADMIN_TOKEN` header for Tejas.
 
@@ -645,15 +646,30 @@ Lint (ESLint, Ruff), typecheck, run API, web, and pipeline tests, build the Dock
 
 ### Production (`docker-compose.prod.yml`)
 - `caddy`: TLS via Let's Encrypt for `scense.name` and `www.scense.name`, serves the web build, proxies `/api` to the API. `scense.name` is the main address; `www.scense.name` returns a permanent redirect to it.
-- `api`: the Node 24 image.
+- `api`: the Node 24 image, production dependencies only, running as the unprivileged `node` user (DECISIONS B43).
 - `db`: `postgres:16` with a named volume, not exposed outside the Docker network.
 - `backup`: nightly `pg_dump` to an S3 bucket, keep 14 days.
+- Networks (DECISIONS B43): `caddy`, `api`, and `db` share `app` (172.30.0.0/24); `backup` and `db` share `backup` (172.30.1.0/24). The deploy installs a host firewall rule that drops traffic from `app` to the EC2 metadata service, so only the backup job can use the instance role.
 
 ### Caddyfile
 
+The file in the repo root (DECISIONS B43 added the security headers and the TLS floor). In outline:
+
 ```
+(security_headers) {
+	header {
+		Content-Security-Policy "default-src 'self'; ... img-src 'self' data: https://fimgs.net; frame-ancestors 'none'; ..."
+		Strict-Transport-Security, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy
+		-Server
+		-Via
+		defer
+	}
+}
+
 scense.name {
+	tls { protocols tls1.2 tls1.3 }
 	encode gzip
+	import security_headers
 	handle /api/* {
 		reverse_proxy api:3000
 	}
@@ -665,6 +681,8 @@ scense.name {
 }
 
 www.scense.name {
+	tls { protocols tls1.2 tls1.3 }
+	import security_headers
 	redir https://scense.name{uri} permanent
 }
 ```

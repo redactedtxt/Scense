@@ -34,8 +34,6 @@ function publicUser(row: UserRow) {
   return { id: row.id, email: row.email, displayName: row.display_name };
 }
 
-// Unique violation on users.email: a second account with the same address.
-const UNIQUE_VIOLATION = "23505";
 
 // The limiters are created here, once per app, so each test's app starts with a clean count.
 export function authRouter(db: Db, settings: AuthSettings, now: () => number = Date.now): Router {
@@ -52,20 +50,19 @@ export function authRouter(db: Db, settings: AuthSettings, now: () => number = D
   router.post("/auth/signup", signupLimit, async (req, res) => {
     const body = parseInput(signupBody, req.body);
     const hash = await hashPassword(body.password, settings.bcryptCost);
-    let row: UserRow;
-    try {
-      const { rows } = await db.query(
-        `INSERT INTO users (email, display_name, password_hash) VALUES ($1, $2, $3)
-         RETURNING id, email, display_name`,
-        [body.email, body.displayName, hash],
-      );
-      row = rows[0];
-    } catch (err) {
-      if ((err as { code?: string }).code === UNIQUE_VIOLATION) {
-        throw new ApiError(409, "email_taken", "An account with this email already exists. Sign in instead.");
-      }
-      throw err;
-    }
+    // ON CONFLICT DO NOTHING instead of catching the unique violation: Postgres logs
+    // every failed statement with its DETAIL, "Key (email)=(...) already exists", so a
+    // taken email used to put a visitor's address in the database log (DECISIONS B43).
+    // Two signups racing for one email still get one row: the second waits for the
+    // first, then does nothing and returns no row.
+    const { rows } = await db.query(
+      `INSERT INTO users (email, display_name, password_hash) VALUES ($1, $2, $3)
+       ON CONFLICT (email) DO NOTHING
+       RETURNING id, email, display_name`,
+      [body.email, body.displayName, hash],
+    );
+    const row = rows[0] as UserRow | undefined;
+    if (!row) throw new ApiError(409, "email_taken", "An account with this email already exists. Sign in instead.");
     await startSession(res, row.id);
     res.status(201).json({ user: publicUser(row) });
   });

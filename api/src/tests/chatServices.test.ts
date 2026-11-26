@@ -214,7 +214,9 @@ describe("bottles a visitor names (DECISIONS B35)", () => {
       [/WITH scored AS/, []],
     ]);
     expect(await bestMatch(db as never, "Myrrh and Tonka", 0.3)).toBe(335);
-    expect(calls.map((c) => c.params[0])).toEqual(["Myrrh:* & and:* & Tonka:*", "Myrrh:* & Tonka:*"]);
+    // Each search first folds accents (the fake hands the text back); the tsqueries follow.
+    const searches = calls.filter((c) => c.sql.includes("search_vector @@"));
+    expect(searches.map((c) => c.params[0])).toEqual(["Myrrh:* & and:* & Tonka:*", "Myrrh:* & Tonka:*"]);
     expect(await bestMatch(db as never, "Hawas Fire", 0.3)).toBeNull();
     expect(calls.at(-1)!.params).toEqual([["Hawas", "Fire"], 0.3]);
   });
@@ -228,7 +230,8 @@ describe("bottles a visitor names (DECISIONS B35)", () => {
       { max: 5, fuzzyMinSimilarity: 0.3 },
     );
     expect(named).toEqual({ matched: [7], liked: [7], unmatched: 0 });
-    expect(calls).toHaveLength(1); // "Creed Aventus" was never typed, so it is never searched
+    // "Creed Aventus" was never typed, so it is never searched.
+    expect(calls.filter((c) => c.sql.includes("search_vector @@"))).toHaveLength(1);
   });
 });
 

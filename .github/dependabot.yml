@@ -1,0 +1,9 @@
+# The workflows pin every action to a commit SHA (DECISIONS B43), so a moved tag can't
+# change what runs. Dependabot keeps those pins current: it opens a pull request with the
+# new SHA (and its version in the comment), which CI tests and a person reviews.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
